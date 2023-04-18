@@ -4,10 +4,13 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
 import pandas as pd
+import pandas_ta as pta
+from pandas_ta import *
 import ta.trend as tr
 import ta.volatility as vo
 import ta.momentum as mo
-
+from ta.volume import MFIIndicator
+from ta.volume import OnBalanceVolumeIndicator
 from ta.volume import ChaikinMoneyFlowIndicator
 from ta.momentum import ROCIndicator
 from ta.volume import money_flow_index
@@ -15,6 +18,8 @@ from ta.volume import AccDistIndexIndicator
 from ta.volume import EaseOfMovementIndicator
 from ta.momentum import AwesomeOscillatorIndicator
 from ta.trend import SMAIndicator
+from ta.trend import MACD
+from ta.momentum import StochasticOscillator
 
 
 import talib
@@ -403,7 +408,7 @@ def sma_chandelier_exit_strategy(data):
     # Load data from CSV and calculate SMA and Chandelier Exit values
     df = data
     sdf = Sdf.retype(df)
-    # print(sdf)
+    # sdf.drop_duplicates()
     sma = sdf['adj close'].rolling(window=20).mean()
     chandelier_exit = sdf['close_22_ema'] - 3 * sdf['atr']
 
@@ -423,22 +428,22 @@ def sma_chandelier_exit_strategy(data):
 def sma_obv_strategy(data):
     # Load data from CSV and calculate SMA and OBV values
     df = data
-    # df.columns = map(str.upper, data.columns)
+    df.columns = [x.title() for x in df.columns]
 
-    sma = df['adj close'].rolling(window=20).mean()
+    sma = df['Adj Close'].rolling(window=20).mean()
     obv = [0]
     for i in range(1, len(df)):
-        if df['adj close'][i] > df['adj close'][i-1]:
-            obv.append(obv[-1] + df['volume'][i])
-        elif df['adj close'][i] < df['adj close'][i-1]:
-            obv.append(obv[-1] - df['volume'][i])
+        if df['Adj Close'][i] > df['Adj Close'][i-1]:
+            obv.append(obv[-1] + df['Volume'][i])
+        elif df['Adj Close'][i] < df['Adj Close'][i-1]:
+            obv.append(obv[-1] - df['Volume'][i])
         else:
             obv.append(obv[-1])
     df['OBV'] = obv
 
     # Apply SMA-OBV strategy
-    buy_signal = df['adj close'].iloc[-1] > sma.iloc[-1] and df['OBV'].iloc[-1] > df['OBV'].iloc[-2]
-    sell_signal = df['adj close'].iloc[-1] < sma.iloc[-1] and df['OBV'].iloc[-1] < df['OBV'].iloc[-2]
+    buy_signal = df['Adj Close'].iloc[-1] > sma.iloc[-1] and df['OBV'].iloc[-1] > df['OBV'].iloc[-2]
+    sell_signal = df['Adj Close'].iloc[-1] < sma.iloc[-1] and df['OBV'].iloc[-1] < df['OBV'].iloc[-2]
 
     # Determine signal for last OHLCV row
     if buy_signal:
@@ -452,7 +457,7 @@ def sma_cmf_strategy(data):
     # Load data from CSV and calculate SMA and CMF values
     df = data
     df.columns = [x.title() for x in df.columns]
-    print(df)    
+    # print(df)    
     sma = df['Adj Close'].rolling(window=20).mean()
     cmf = ChaikinMoneyFlowIndicator(high=df['High'], low=df['Low'], close=df['Close'], volume=df['Volume']).chaikin_money_flow()
     df['CMF'] = cmf
@@ -813,6 +818,1341 @@ def ema_psar_strategy(df, acceleration_factor=0.02, max_acceleration_factor=0.2)
         return 0
 
 
+def ema_ichimoku_strategy(data):
+    # Calculate the EMA(26) and EMA(9)
+    ema26 = talib.EMA(data['Close'], timeperiod=26)
+    ema9 = talib.EMA(data['Close'], timeperiod=9)
+    
+    # Calculate the Tenkan-sen (Conversion Line) and Kijun-sen (Base Line)
+    high9 = talib.MAX(data['High'], timeperiod=9)
+    low9 = talib.MIN(data['Low'], timeperiod=9)
+    tenkan_sen = (high9 + low9) / 2
+    
+    high26 = talib.MAX(data['High'], timeperiod=26)
+    low26 = talib.MIN(data['Low'], timeperiod=26)
+    kijun_sen = (high26 + low26) / 2
+    
+    # Calculate the Senkou Span A (Leading Span A) and Senkou Span B (Leading Span B)
+    senkou_span_a = (tenkan_sen + kijun_sen) / 2
+    high52 = talib.MAX(data['High'], timeperiod=52)
+    low52 = talib.MIN(data['Low'], timeperiod=52)
+    senkou_span_b = (high52 + low52) / 2
+    
+    # Calculate the Chikou Span (Lagging Span)
+    chikou_span = data['Close'].shift(-26)
+    
+    # Determine the strategy signal
+    signal = 0
+    if ema9.iloc[-1] > ema26.iloc[-1] and data['Close'].iloc[-1] > senkou_span_a.iloc[-26] and data['Close'].iloc[-1] > senkou_span_b.iloc[-26] and chikou_span.iloc[-26] > data['Close'].iloc[-1]:
+        signal = 1
+    elif ema9.iloc[-1] < ema26.iloc[-1] and data['Close'].iloc[-1] < senkou_span_a.iloc[-26] and data['Close'].iloc[-1] < senkou_span_b.iloc[-26] and chikou_span.iloc[-26] < data['Close'].iloc[-1]:
+        signal = -1
+    
+    return signal
+
+
+def ema_supertrend_strategy(data: pd.DataFrame, n: int = 20, m: float = 3.0) -> int:
+
+    # Calculate EMA
+    ema = talib.EMA(data['Close'], timeperiod=n)
+    
+    # Calculate ATR
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=n)
+    
+    # Calculate Upper and Lower Bands
+    upper_band = ema + m * atr
+    lower_band = ema - m * atr
+    
+    # Calculate Supertrend
+    supertrend = pd.Series(0.0, index=data.index)
+    for i in range(n, len(data)):
+        if data['Close'][i] > upper_band[i - 1]:
+            supertrend[i] = lower_band[i]
+        elif data['Close'][i] < lower_band[i - 1]:
+            supertrend[i] = upper_band[i]
+        else:
+            supertrend[i] = supertrend[i - 1] if data['Close'][i - 1] < supertrend[i - 1] else lower_band[i] if ema[i] < lower_band[i] else upper_band[i]
+    
+    # Generate trading signal
+    if data['Close'][-1] < supertrend[-1]:
+        return -1  # Sell signal
+    elif data['Close'][-1] > supertrend[-1]:
+        return 1  # Buy signal
+    else:
+        return 0  # Hold signal
+
+
+def ema_rsi_strategy(data):
+    # Load data from CSV and calculate EMA and RSI values
+    df = data
+    ema = talib.EMA(df['Adj Close'], timeperiod=20)
+    rsi = mo.RSIIndicator(df['Adj Close'], window=14).rsi()
+
+    # Apply EMA-RSI strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (rsi.iloc[-1] > 50)
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (rsi.iloc[-1] < 50)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_stochastic_strategy(data):
+    # Load data from CSV and calculate EMA and Stochastic values
+    df = data
+    ema = df['Adj Close'].ewm(span=9, adjust=False).mean()
+    stochastic = mo.StochasticOscillator(high=df['High'], low=df['Low'], close=df['Adj Close'], window=14, smooth_window=3).stoch()
+
+    # Apply EMA-Stochastic strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (stochastic.iloc[-1] < 30)
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (stochastic.iloc[-1] > 70)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_cci_strategy(data):
+    # Load data from CSV and calculate EMA and CCI values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    cci = tr.cci(df['High'], df['Low'], df['Close'], window=20, constant=0.015)
+
+    # Apply EMA-CCI strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (cci.iloc[-1] > 100)
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (cci.iloc[-1] < -100)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_roc_strategy(data):
+    # Load data from CSV and calculate EMA and ROC values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    roc = mo.ROCIndicator(df['Adj Close'], window=14).roc()
+
+    # Apply EMA-ROC strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (roc.iloc[-1] > 0)
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (roc.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_wpr_strategy(data):
+    # Load data from CSV and calculate EMA and WPR values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    wpr = mo.WilliamsRIndicator(df['High'], df['Low'], df['Close'], 14)
+
+    # Apply EMA-WPR strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (wpr.williams_r()[-1] > -80)
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (wpr.williams_r()[-1] < -20)	
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_macd_hist_strategy(data):
+    # Load data from CSV and calculate EMA and MACD values
+    df = data
+    ema_12 = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    ema_26 = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    macd = ema_12 - ema_26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    macd_hist = macd - signal
+
+    # Apply EMA-MACD Hist strategy
+    buy_signal = (macd_hist.iloc[-2] < 0) and (macd_hist.iloc[-1] > 0)
+    sell_signal = (macd_hist.iloc[-2] > 0) and (macd_hist.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_bbands_strategy(data):
+    # Load data from CSV and calculate EMA and Bollinger Bands values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    std = df['Adj Close'].rolling(window=20).std()
+    upper_band = ema + 2 * std
+    lower_band = ema - 2 * std
+
+    # Apply EMA-Bollinger Bands strategy
+    buy_signal = (df['Adj Close'].iloc[-1] < lower_band.iloc[-1])
+    sell_signal = (df['Adj Close'].iloc[-1] > upper_band.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_atr_strategy(data):
+    # Load data from CSV and calculate EMA and ATR values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    atr = vo.AverageTrueRange(df['High'], df['Low'], df['Close'], window=14)
+
+    # Apply EMA-ATR strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (df['Low'].iloc[-1] > (ema.iloc[-1] - atr.average_true_range()[-1]))
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (df['High'].iloc[-1] < (ema.iloc[-1] + atr.average_true_range()[-1]))	
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_stdev_strategy(data):
+    # Load data from CSV and calculate EMA and STDEV values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    stdev = df['Adj Close'].rolling(window=20).std()
+
+    # Apply EMA-STDEV strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1] + stdev.iloc[-1])
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1] - stdev.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_kc_strategy(data):
+    # Load data from CSV and calculate EMA and Keltner Channels values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=10)
+    upper_kc = ema + 2 * atr
+    lower_kc = ema - 2 * atr
+
+    # Apply EMA-KC strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > upper_kc.iloc[-1])
+    sell_signal = (df['Adj Close'].iloc[-1] < lower_kc.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_donchian_strategy(data):
+    # Load data from CSV and calculate EMA and Donchian Channel values
+    df = data
+    ema_fast = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    ema_slow = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    donchian_upper = df['Adj Close'].rolling(window=20).max()
+    donchian_lower = df['Adj Close'].rolling(window=20).min()
+
+    # Apply EMA-Donchian strategy
+    buy_signal = (ema_fast.iloc[-1] > ema_slow.iloc[-1]) and (df['Adj Close'].iloc[-1] > donchian_upper.iloc[-1])
+    sell_signal = (ema_fast.iloc[-1] < ema_slow.iloc[-1]) or (df['Adj Close'].iloc[-1] < donchian_lower.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_chandelier_exit_strategy(data):
+    # Load data from CSV and calculate EMA and ATR values
+    df = data
+    df.columns = [x.title() for x in df.columns]
+    # print(df)
+    ema = df['Adj Close'].ewm(span=22, adjust=False).mean()
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=22)
+
+    # Calculate Chandelier Exit long and short values
+    long_chandelier_exit = ema - 3 * atr
+    short_chandelier_exit = ema + 3 * atr
+
+    # Determine signal for last OHLCV row
+    if df['Adj Close'].iloc[-1] > long_chandelier_exit.iloc[-1]:
+        return 1
+    elif df['Adj Close'].iloc[-1] < short_chandelier_exit.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def ema_obv_strategy(data):
+    # Load data from CSV and calculate EMA and OBV values
+    df = data
+    ema = tr.ema_indicator(df['Adj Close'], window=20)
+    obv = [0]
+    for i in range(1, len(df)):
+        if df['Adj Close'][i] > df['Adj Close'][i-1]:
+            obv.append(obv[-1] + df['Volume'][i])
+        elif df['Adj Close'][i] < df['Adj Close'][i-1]:
+            obv.append(obv[-1] - df['Volume'][i])
+        else:
+            obv.append(obv[-1])
+    df['OBV'] = obv
+	
+    # Apply EMA-OBV strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (df['OBV'].iloc[-1] > df['OBV'].iloc[-2])
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) or (df['OBV'].iloc[-1] < df['OBV'].iloc[-2])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_cmf_strategy(data):
+    # Load data from CSV and calculate EMA and CMF values
+    df = data
+    ema_fast = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    ema_slow = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    cmf = ChaikinMoneyFlowIndicator(df['High'], df['Low'], df['Close'], df['Volume']).chaikin_money_flow()
+
+    # Apply EMA-CMF strategy
+    buy_signal = (ema_fast.iloc[-1] > ema_slow.iloc[-1]) and (cmf.iloc[-1] > 0)
+    sell_signal = (ema_fast.iloc[-1] < ema_slow.iloc[-1]) or (cmf.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_vroc_strategy(data):
+    # Load data from CSV and calculate EMA and VROC values
+    df = data
+    ema_short = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    ema_long = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    vroc = mo.ROCIndicator(df['Volume'], window=14).roc() / 100
+
+    # Apply EMA-VROC strategy
+    buy_signal = (ema_short.iloc[-1] > ema_long.iloc[-1]) and (vroc.iloc[-1] > 0)
+    sell_signal = (ema_short.iloc[-1] < ema_long.iloc[-1]) or (vroc.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_mfi_strategy(data):
+    # Load data from CSV and calculate EMA and MFI values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    mfi = MFIIndicator(df['High'], df['Low'], df['Adj Close'], df['Volume'], window=14).money_flow_index()
+
+    # Apply EMA-MFI strategy
+    buy_signal = (ema.iloc[-1] > ema.iloc[-2]) and (mfi.iloc[-1] < 20)
+    sell_signal = (ema.iloc[-1] < ema.iloc[-2]) or (mfi.iloc[-1] > 80)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_adl_strategy(data):
+    # Load data from CSV and calculate ADL and EMA values
+    df = data
+    money_flow_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low'])
+    money_flow_volume = money_flow_multiplier * df['Volume']
+    adl = money_flow_volume.cumsum()
+    ema_adl = adl.ewm(span=20, adjust=False).mean()
+
+    # Apply EMA-ADL strategy
+    buy_signal = (df['Close'].iloc[-1] > ema_adl.iloc[-1])
+    sell_signal = (df['Close'].iloc[-1] < ema_adl.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_eom_strategy(data):
+    # Load data from CSV and calculate EMA and EOM values
+    df = data
+    ema = tr.ema_indicator(df['Close'], window=20)
+    eom = EaseOfMovementIndicator(
+        high=df['High'], low=df['Low'], volume=df['Volume'], window=14, fillna=False
+    ).sma_ease_of_movement()
+
+    # Apply EMA-EOM strategy
+    buy_signal = (ema.iloc[-1] > ema.iloc[-2]) and (eom.iloc[-1] > 0)
+    sell_signal = (ema.iloc[-1] < ema.iloc[-2]) or (eom.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def ema_pivot_points_strategy(data):
+    # Load data from CSV and calculate EMA and Pivot Point levels
+    df = data
+    ema_short = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    ema_long = df['Adj Close'].ewm(span=50, adjust=False).mean()
+    pivot = (df['High'] + df['Low'] + df['Adj Close']) / 3
+    r1 = 2 * pivot - df['Low']
+    s1 = 2 * pivot - df['High']
+    r2 = pivot + (df['High'] - df['Low'])
+    s2 = pivot - (df['High'] - df['Low'])
+    r3 = df['High'] + 2 * (pivot - df['Low'])
+    s3 = df['Low'] - 2 * (df['High'] - pivot)
+
+    # Apply EMA-Pivot Point strategy
+    buy_signal = (ema_short.iloc[-1] > ema_long.iloc[-1]) and (df['Adj Close'].iloc[-1] > r1.iloc[-1])
+    sell_signal = (ema_short.iloc[-1] < ema_long.iloc[-1]) and (df['Adj Close'].iloc[-1] < s1.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_fibonacci_strategy(data):
+    # Load data from CSV and calculate EMA and Fibonacci retracement levels
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    high = df['High']
+    low = df['Low']
+    close = df['Adj Close']
+    pivot_high = high.rolling(window=10, center=False).max()
+    pivot_low = low.rolling(window=10, center=False).min()
+    diff = pivot_high - pivot_low
+    levels = [0.236, 0.382, 0.5, 0.618, 0.764]
+
+    # Apply EMA-Fibonacci retracement strategy
+    buy_signal = (close.iloc[-1] > ema.iloc[-1]) and (close.iloc[-1] <= (pivot_low.iloc[-1] + levels[0] * diff.iloc[-1]))
+    sell_signal = (close.iloc[-1] < ema.iloc[-1]) or (close.iloc[-1] >= (pivot_high.iloc[-1] - levels[0] * diff.iloc[-1]))
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+    
+def ema_srl_strategy(data, sma_periods=[20, 50]):
+    # Compute SMAs
+    for period in sma_periods:
+        sma_label = f"EMA_{period}"
+        data[sma_label] = data['Close'].ewm(period).mean()
+
+    # Compute potential support and resistance levels
+    data['SRL'] = 0
+    for i in range(max(sma_periods), len(data)):
+        if data['Close'][i] < data['EMA_%d' % sma_periods[0]][i] and data['Close'][i] > data['EMA_%d' % sma_periods[1]][i]:
+            data['SRL'][i] = 1  # Resistance level
+        elif data['Close'][i] > data['EMA_%d' % sma_periods[0]][i] and data['Close'][i] < data['EMA_%d' % sma_periods[1]][i]:
+            data['SRL'][i] = -1  # Support level
+	
+	# data['SRL'].fillna(0, inplace=True)
+    # Return last signal
+    return int(data['SRL'][-1])
+
+def ema_gann_lines_strategy(data):
+    # Load data from CSV and calculate EMA values
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+
+    # Determine trend direction using EMA values
+    trend_up = ema.iloc[-1] > ema.iloc[-2]
+
+    # Draw Gann Lines on the price chart based on trend direction
+    if trend_up:
+        resistance = df['Adj Close'].iloc[-1] + 0.25 * (df['Adj Close'].iloc[-1] - ema.iloc[-1])
+        support = df['Adj Close'].iloc[-1] - 0.25 * (df['Adj Close'].iloc[-1] - ema.iloc[-1])
+    else:
+        resistance = df['Adj Close'].iloc[-1] - 0.25 * (ema.iloc[-1] - df['Adj Close'].iloc[-1])
+        support = df['Adj Close'].iloc[-1] + 0.25 * (ema.iloc[-1] - df['Adj Close'].iloc[-1])
+
+    # Apply Gann Lines strategy
+    buy_signal = (df['Adj Close'].iloc[-1] >= support) and (ema.iloc[-1] >= support)
+    sell_signal = (df['Adj Close'].iloc[-1] <= resistance) and (ema.iloc[-1] <= resistance)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_andrews_pitchfork_strategy(data):
+    # Load data from CSV and calculate EMA and Andrews Pitchfork
+    df = data
+    ema = df['Adj Close'].ewm(span=20, adjust=False).mean()
+    highs = df['High']
+    lows = df['Low']
+    pivot = (highs + lows + ema) / 3
+    diff = highs - lows
+    support1 = pivot - (0.3333 * diff)
+    resistance1 = pivot + (0.3333 * diff)
+    support2 = pivot - (0.6666 * diff)
+    resistance2 = pivot + (0.6666 * diff)
+    support3 = pivot - diff
+    resistance3 = pivot + diff
+
+    # Apply EMA-Andrews Pitchfork strategy
+    buy_signal = (df['Adj Close'].iloc[-1] > resistance1.iloc[-1])
+    sell_signal = (df['Adj Close'].iloc[-1] < support1.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_sr_strategy(data):
+    # Load data from CSV and calculate EMA and support/resistance levels
+    df = data
+    ema = df['Adj Close'].ewm(span=20).mean()
+    support_levels = df['Adj Close'].rolling(window=20).min()
+    resistance_levels = df['Adj Close'].rolling(window=20).max()
+
+    # Determine buy and sell signals based on EMA and support/resistance levels
+    buy_signal = (df['Adj Close'].iloc[-1] > ema.iloc[-1]) and (df['Adj Close'].iloc[-1] > support_levels.iloc[-1])
+    sell_signal = (df['Adj Close'].iloc[-1] < ema.iloc[-1]) and (df['Adj Close'].iloc[-1] < resistance_levels.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def ema_awesome_oscillator_strategy(data):
+    # Load data from CSV and calculate EMA and Awesome Oscillator values
+    df = data
+    ema_fast = df['Adj Close'].ewm(span=5, adjust=False).mean()
+    ema_slow = df['Adj Close'].ewm(span=34, adjust=False).mean()
+    awesome_oscillator = ema_fast - ema_slow
+
+    # Apply EMA-Awesome Oscillator strategy
+    buy_signal = (awesome_oscillator.iloc[-1] > 0) and (awesome_oscillator.iloc[-2] < 0)
+    sell_signal = (awesome_oscillator.iloc[-1] < 0) and (awesome_oscillator.iloc[-2] > 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_strategy(data):
+    # Load data from CSV and calculate MACD values
+    df = data
+    ema_12 = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    ema_26 = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    macd_line = ema_12 - ema_26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_histogram = macd_line - signal_line
+
+    # Apply MACD strategy
+    buy_signal = (macd_line.iloc[-1] > signal_line.iloc[-1]) and (macd_line.iloc[-2] <= signal_line.iloc[-2])
+    sell_signal = (macd_line.iloc[-1] < signal_line.iloc[-1]) and (macd_line.iloc[-2] >= signal_line.iloc[-2])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_psar_strategy(data):
+    # Load data from CSV and calculate MACD and Parabolic SAR values
+    df = data
+    macd = tr.MACD(df['Adj Close'], window_fast=12, window_slow=26, window_sign=9)
+    psar = tr.PSARIndicator(df['High'], df['Low'], df['Adj Close'], step=0.02, max_step=0.2).psar()
+	
+    # Apply MACD-PSAR strategy
+    buy_signal = (macd.macd_signal().iloc[-1] > 0) and (df['Adj Close'].iloc[-1] > psar.iloc[-1])
+    sell_signal = (macd.macd_signal().iloc[-1] < 0) or (df['Adj Close'].iloc[-1] < psar.iloc[-1])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_ichimoku_strategy(df):
+    # Compute MACD and Ichimoku indicators
+    macd = tr.MACD(df["Close"]).macd()
+    ichimoku = tr.IchimokuIndicator(df["High"], df["Low"], 9, 26, 52).ichimoku_conversion_line()
+    ichimoku_base = tr.IchimokuIndicator(df["High"], df["Low"], 9, 26, 52).ichimoku_base_line()
+
+    # Determine signals based on MACD and Ichimoku indicators
+    buy_signal = (macd > ichimoku) & (df["Close"] > ichimoku_base)
+    sell_signal = (macd < ichimoku) & (df["Close"] < ichimoku_base)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def macd_supertrend_atr_strategy(data, macd_fast=12, macd_slow=26, macd_signal=9, supertrend_multiplier=3, atr_window=14):
+    # Calculate MACD
+    ema_fast = data['Close'].ewm(span=macd_fast, min_periods=macd_fast).mean()
+    ema_slow = data['Close'].ewm(span=macd_slow, min_periods=macd_slow).mean()
+    macd = ema_fast - ema_slow
+    signal = macd.ewm(span=macd_signal, min_periods=macd_signal).mean()
+    macd_hist = macd - signal
+
+    # Calculate Supertrend
+    atr = data['High'].sub(data['Low']).abs().rolling(atr_window).mean()
+    basic_upper_band = (data['High'] + data['Low']) / 2 + supertrend_multiplier * atr
+    basic_lower_band = (data['High'] + data['Low']) / 2 - supertrend_multiplier * atr
+    basic_trend = np.where(data['Close'] > basic_upper_band.shift(), 1, np.where(data['Close'] < basic_lower_band.shift(), -1, 0))
+    supertrend = np.where(basic_trend == 0, np.where(basic_upper_band.shift() < basic_upper_band, basic_upper_band, basic_upper_band.shift()), np.where(basic_trend > 0, basic_lower_band, basic_upper_band))
+
+    # Determine signal for last OHLCV row
+    if supertrend[-1] == 1 and macd_hist[-1] > 0:
+        return 1
+    elif supertrend[-1] == -1 and macd_hist[-1] < 0:
+        return -1
+    else:
+        return 0
+
+
+import pandas as pd
+import numpy as np
+import talib
+
+def macd_rsi_strategy(df, macd_fast=12, macd_slow=26, macd_signal=9, rsi_period=14, rsi_upper=70, rsi_lower=30):
+    # Compute MACD and signal lines
+    macd, macd_signal_line, _ = talib.MACD(df['Close'], fastperiod=macd_fast, slowperiod=macd_slow, signalperiod=macd_signal)
+
+    # Compute RSI
+    rsi = talib.RSI(df['Close'], timeperiod=rsi_period)
+
+    # Compute signal
+    buy_signal = (macd > macd_signal_line) & (rsi < rsi_lower)
+    sell_signal = (macd < macd_signal_line) & (rsi > rsi_upper)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def macd_stochastic_strategy(data):
+    # Initialize indicators
+    macd = MACD(data['Close']).macd()
+    macd_signal = MACD(data['Close']).macd_signal()
+    stoch = StochasticOscillator(data['High'], data['Low'], data['Close']).stoch()
+    
+    # Determine signals
+    buy_signal = (macd > macd_signal) & (stoch < 20)
+    sell_signal = (macd < macd_signal) & (stoch > 80)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def macd_cci_strategy(df, fast_period=12, slow_period=26, signal_period=9, cci_period=14, cci_upper=100, cci_lower=-100):
+    # Calculate MACD
+    macd, signal, hist = talib.MACD(df['Close'], fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)
+    
+    # Calculate CCI
+    cci = talib.CCI(df['High'], df['Low'], df['Close'], timeperiod=cci_period)
+    
+    # Determine buy and sell signals based on MACD and CCI
+    buy_signal = (macd > signal) & (cci < cci_lower)
+    sell_signal = (macd < signal) & (cci > cci_upper)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_roc_strategy(df, n_fast=12, n_slow=26, n_signal=9, n_roc=10):
+    # Calculate MACD
+    macd, macdsignal, macdhist = talib.MACD(df['Close'], fastperiod=n_fast, slowperiod=n_slow, signalperiod=n_signal)
+    
+    # Calculate ROC
+    roc = talib.ROC(df['Close'], timeperiod=n_roc)
+    
+    # Determine if MACD and ROC are above or below zero line
+    macd_above_zero = macdhist > 0
+    roc_above_zero = roc > 0
+    
+    # Determine if MACD and ROC are bullish or bearish
+    macd_bullish = macdhist > macdhist.shift(1)
+    roc_bullish = roc > roc.shift(1)
+    
+    # Determine buy and sell signals
+    buy_signal = macd_above_zero & roc_above_zero & macd_bullish & roc_bullish
+    sell_signal = (~macd_above_zero) & (~roc_above_zero) & (~macd_bullish) & (~roc_bullish)
+    
+    # Determine signal for last row of OHLC data
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_wpr_strategy(df, fast_period=12, slow_period=26, signal_period=9, wpr_period=14, wpr_oversold=-80, wpr_overbought=-20):
+    # Compute MACD
+    # macd = tr.MACD(df['Close'], fast_period, slow_period, signal_period)
+    # df['macd'] = macd.macd()
+    # df['signal'] = macd.macd_signal()
+	macd, macdsignal, macdhist = talib.MACD(df['Close'], fastperiod=fast_period, slowperiod=slow_period, signalperiod=slow_period)
+
+    # Compute Williams %R (WPR)
+	wpr = mo.WilliamsRIndicator(df['High'], df['Low'], df['Close'], wpr_period)
+	df['wpr'] = wpr.williams_r()
+    
+    # Determine buy and sell signals
+    # buy_signal = (df['macd'] > df['signal']) & (df['wpr'] < wpr_oversold)
+    # sell_signal = (df['macd'] < df['signal']) & (df['wpr'] > wpr_overbought)
+	buy_signal = (macd > macdsignal) & (df['wpr'][-1] < wpr_oversold)
+	sell_signal = (macd < macdsignal) & (df['wpr'][-1] > wpr_overbought)
+    
+	# Determine signal for last OHLCV row
+	if buy_signal.iloc[-1]:
+		return 1
+	elif sell_signal.iloc[-1]:
+		return -1
+	else:
+		return 0
+
+def macd_hist_strategy(data, fast_period=12, slow_period=26, signal_period=9):
+    # Compute MACD line and signal line
+    macd, macdsignal, macdhist = talib.MACD(data['Close'], fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)
+    
+    # Compute EMA crossover signals
+    ema_fast = talib.EMA(data['Close'], timeperiod=fast_period)
+    ema_slow = talib.EMA(data['Close'], timeperiod=slow_period)
+    ema_signal = np.where(ema_fast > ema_slow, 1, -1)
+    
+    # Compute MACD histogram signals
+    macd_signal = np.where(macdhist > 0, 1, -1)
+    
+    # Combine signals
+    buy_signal = (ema_signal[-1] == 1) and (macd_signal[-1] == 1)
+    sell_signal = (ema_signal[-1] == -1) and (macd_signal[-1] == -1)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_bbands_strategy(df, n_fast=12, n_slow=26, n_signal=9, n_bbands=20, dev=2):
+    # Calculate MACD
+    macd, macd_signal, macd_hist = talib.MACD(df['Close'], fastperiod=n_fast, slowperiod=n_slow, signalperiod=n_signal)
+    
+    # Calculate Bollinger Bands
+    middle_band = df['Close'].rolling(window=n_bbands).mean()
+    upper_band = middle_band + dev * df['Close'].rolling(window=n_bbands).std()
+    lower_band = middle_band - dev * df['Close'].rolling(window=n_bbands).std()
+    
+    # Determine buy/sell signals based on MACD and Bollinger Bands
+    buy_signal = (macd > macd_signal) & (df['Close'] < lower_band)
+    sell_signal = (macd < macd_signal) & (df['Close'] > upper_band)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_atr_strategy(data, fast_period=12, slow_period=26, signal_period=9, atr_period=14, multiplier=2):
+    # Calculate MACD
+    macd, macd_signal, macd_hist = talib.MACD(data['Close'], fastperiod=fast_period, slowperiod=slow_period, signalperiod=signal_period)
+
+    # Calculate ATR
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=atr_period)
+
+    # Calculate upper and lower bands
+    upper_band = data['Close'] + (multiplier * atr)
+    lower_band = data['Close'] - (multiplier * atr)
+
+    # Determine buy and sell signals
+    buy_signal = (macd_hist > 0) & (data['Close'] > upper_band)
+    sell_signal = (macd_hist < 0) & (data['Close'] < lower_band)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_stdev_strategy(df, n_fast=12, n_slow=26, n_signal=9, n_stdev=20):
+    # Compute MACD
+    macd, macd_signal, _ = talib.MACD(df['Close'], n_fast, n_slow, n_signal)
+    
+    # Compute standard deviation
+    stdev = df['Close'].rolling(window=n_stdev).std()
+
+    # Compute buy/sell signals
+    buy_signal = (df['Close'] > stdev) & (macd > macd_signal)
+    sell_signal = (df['Close'] <= stdev) & (macd < macd_signal)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_kc_strategy(df):
+    # Calculate MACD indicators
+    ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
+    macd_line = ema_12 - ema_26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist = macd_line - signal_line
+    
+    # Calculate Keltner Channels
+    kc_mid = df['Close'].ewm(span=20, adjust=False).mean()
+    kc_range = df['High'] - df['Low']
+    kc_atr = kc_range.ewm(span=2, adjust=False).mean()
+    kc_upper = kc_mid + 2 * kc_atr
+    kc_lower = kc_mid - 2 * kc_atr
+    
+    # Determine buy/sell/hold signals
+    buy_signal = (macd_line > signal_line) & (df['Close'] > kc_upper)
+    sell_signal = (macd_line < signal_line) & (df['Close'] < kc_lower)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_donchian_strategy(df, fast_period=12, slow_period=26, signal_period=9, donchian_period=20):
+    # Calculate MACD
+    ema_fast = df['Close'].ewm(span=fast_period, adjust=False).mean()
+    ema_slow = df['Close'].ewm(span=slow_period, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    signal = macd.ewm(span=signal_period, adjust=False).mean()
+
+    # Calculate Donchian Channel
+    df['High_rolling'] = df['High'].rolling(window=donchian_period).max()
+    df['Low_rolling'] = df['Low'].rolling(window=donchian_period).min()
+    df['DC_upper'] = df['High_rolling'].shift(1)
+    df['DC_lower'] = df['Low_rolling'].shift(1)
+
+    # Determine buy and sell signals
+    buy_signal = (df['Close'].shift(1) > df['DC_upper'].shift(1)) & (df['Close'] < df['DC_upper'])
+    sell_signal = (df['Close'].shift(1) < df['DC_lower'].shift(1)) & (df['Close'] > df['DC_lower'])
+
+    # Determine MACD signal
+    macd_signal = macd - signal
+    macd_signal = np.where(macd_signal > 0, 1, -1)
+
+    # Combine signals
+    signals = np.zeros(len(df))
+    signals[buy_signal] = 1
+    signals[sell_signal] = -1
+    signals = signals + macd_signal
+    signals = np.where(signals > 1, 1, np.where(signals < -1, -1, signals))
+
+    return int(signals[-1])
+
+
+# def macd_chandelier_exit_strategy(df, period=22, atr_multiplier=3):
+#     # Calculate MACD
+#     macd, signal, hist = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+#     df['MACD'] = macd
+#     df['Signal'] = signal
+#     df['MACD_hist'] = hist
+
+#     # Calculate ATR
+#     df['ATR'] = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=period)
+
+#     # Calculate Chandelier Exit
+#     long_stop = df['High'].rolling(period).max() - atr_multiplier * df['ATR']
+#     short_stop = df['Low'].rolling(period).min() + atr_multiplier * df['ATR']
+
+#     # Determine signal for last OHLCV row
+#     if df['Close'].iloc[-1] > long_stop.iloc[-1]:
+#         return 1
+#     elif df['Close'].iloc[-1] < short_stop.iloc[-1]:
+#         return -1
+#     else:
+#         return 0
+
+def macd_chandelier_exit_strategy(data):
+    # Load data from CSV and calculate MACD and Chandelier Exit values
+    df = data
+    exp1 = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=9, adjust=False).mean()
+
+    atr = df['High'] - df['Low']
+    atr = atr.rolling(window=14).mean()
+    chandelier_exit = df['High'].rolling(window=22).max() - atr * 3
+
+    # Apply MACD-Chandelier Exit strategy
+    buy_signal = macd.iloc[-1] > signal.iloc[-1] and df['Adj Close'].iloc[-1] > chandelier_exit.iloc[-1]
+    sell_signal = macd.iloc[-1] < signal.iloc[-1] or df['Adj Close'].iloc[-1] < chandelier_exit.iloc[-1]
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_obv_strategy(data):
+    # Load data from CSV and calculate MACD and OBV values
+    df = data
+    df['macd'], _, _ = talib.MACD(df['Adj Close'])
+    obv = [0]
+    for i in range(1, len(df)):
+        if df['Adj Close'][i] > df['Adj Close'][i-1]:
+            obv.append(obv[-1] + df['Volume'][i])
+        elif df['Adj Close'][i] < df['Adj Close'][i-1]:
+            obv.append(obv[-1] - df['Volume'][i])
+        else:
+            obv.append(obv[-1])
+    df['obv'] = obv    
+    # sdf['obv'] = obv#ta.obv(df['close'], df['volume'])
+
+    # Apply MACD-OBV strategy
+    buy_signal = (df['macd'].iloc[-1] > 0) & (df['obv'].iloc[-1] > df['obv'].iloc[-2])
+    sell_signal = (df['macd'].iloc[-1] < 0) & (df['obv'].iloc[-1] < df['obv'].iloc[-2])
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_cmf_strategy(data):
+    # Load data from CSV and calculate MACD and CMF values
+    df = data
+    stock = Sdf.retype(df)
+    # stock.drop_duplicates()
+    macd = stock['macd']
+    signal = stock['macds']
+    cmf = stock['cmf']
+
+    # Apply MACD-CMF strategy
+    buy_signal = (macd.iloc[-1] > signal.iloc[-1]) & (cmf.iloc[-1] > 0)
+    sell_signal = (macd.iloc[-1] < signal.iloc[-1]) & (cmf.iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_cmf_strategy(data):
+    # Calculate MACD and CMF
+    df = data.copy()
+    df['ema12'] = df['Adj Close'].ewm(span=12, adjust=False).mean()
+    df['ema26'] = df['Adj Close'].ewm(span=26, adjust=False).mean()
+    df['macd'] = df['ema12'] - df['ema26']
+    df['cmf'] = ((2 * df['Adj Close'] - df['High'] - df['Low']) / (df['High'] - df['Low'])).rolling(window=20).mean()
+
+    # Determine signals
+    buy_signal = (df['macd'].iloc[-1] > 0) & (df['cmf'].iloc[-1] > 0)
+    sell_signal = (df['macd'].iloc[-1] < 0) & (df['cmf'].iloc[-1] < 0)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_vroc_strategy(data):
+    # Load data from CSV
+    df = data
+    
+    # Calculate MACD and VROC using talib
+    macd, macd_signal, macd_hist = talib.MACD(df['Adj Close'])
+    vroc = talib.ROC(df['Volume'], timeperiod=14)
+    # print(vroc)
+    # Determine signals based on MACD and VROC
+    if macd[-1] > macd_signal[-1] and vroc[-1] > 0:
+        return 1  # Buy signal
+    elif macd[-1] < macd_signal[-1] and vroc[-1] < 0:
+        return -1  # Sell signal
+    else:
+        return 0  # Hold signal
+
+
+def macd_mfi_strategy(data):
+    # Load data from CSV and calculate MACD and MFI values
+    df = data
+    close = df['Adj Close']
+    macd, macdsignal, macdhist = talib.MACD(close)
+    mfi = talib.MFI(df['High'], df['Low'], close, df['Volume'], timeperiod=14)
+
+    # Apply MACD-MFI strategy
+    buy_signal = (macdhist[-2] < 0) and (macdhist[-1] > 0) and (mfi[-1] < 30)
+    sell_signal = (macdhist[-2] > 0) and (macdhist[-1] < 0) and (mfi[-1] > 70)
+
+    # Determine signal for last row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_adl_strategy(data):
+    # Load data from CSV
+    df = data
+
+    # Calculate ADL
+    adl = talib.AD(df['High'], df['Low'], df['Close'], df['Volume'])
+
+    # Calculate MACD
+    macd, signal, hist = talib.MACD(df['Close'])
+
+    # Apply MACD-ADL strategy
+    buy_signal = (macd[-1] > signal[-1]) and (adl[-1] > adl[-2])
+    sell_signal = (macd[-1] < signal[-1]) and (adl[-1] < adl[-2])
+
+    # Determine signal for last row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_eom_strategy(data):
+    # Load data from CSV and calculate EOM and MACD values
+    close = data['Close']
+    high = data['High']
+    low = data['Low']
+    volume = data['Volume']
+
+    distance_moved = ((high + low) / 2) - talib.SMA((high + low) / 2, timeperiod=14)
+    box_ratio = (volume / 100000000) / (high - low)
+    one_day_eom = distance_moved / box_ratio
+    eom = talib.SMA(one_day_eom, timeperiod=14) / talib.SMA(volume, timeperiod=14)
+
+    # Calculate MACD values
+    macd, signal, hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+
+    # Apply MACD-EOM strategy
+    buy_signal = macd[-1] > signal[-1] and eom[-1] > eom[-2]
+    sell_signal = macd[-1] < signal[-1] and eom[-1] < eom[-2]
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def macd_pivot_points_strategy(data):
+    # Load data from CSV and calculate MACD and pivot points
+    df = data.copy()
+    df['pivot'] = (df['High'] + df['Low'] + df['Close']) / 3
+    df['pivot_shift'] = df['pivot'].shift(1)
+    df['high_shift'] = df['High'].shift(1)
+    df['low_shift'] = df['Low'].shift(1)
+    df['close_shift'] = df['Close'].shift(1)
+    df['r1'] = (2 * df['pivot']) - df['Low']
+    df['s1'] = (2 * df['pivot']) - df['High']
+    df['r2'] = df['pivot'] + (df['high_shift'] - df['low_shift'])
+    df['s2'] = df['pivot'] - (df['high_shift'] - df['low_shift'])
+    df['r3'] = df['high_shift'] + 2 * (df['pivot'] - df['low_shift'])
+    df['s3'] = df['low_shift'] - 2 * (df['high_shift'] - df['pivot'])
+
+    macd, signal, hist = talib.MACD(df['Close'].values, fastperiod=12, slowperiod=26, signalperiod=9)
+    
+    # Apply MACD-Pivot Points strategy
+    buy_signal = (macd[-1] > signal[-1]) and (df['Close'].iloc[-1] > df['pivot_shift'][-1])
+    sell_signal = (macd[-1] < signal[-1]) and (df['Close'].iloc[-1] < df['pivot_shift'][-1])
+    
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_fibonacci_strategy(data):
+    # Load data from CSV and calculate MACD values
+    df = data
+    close_prices = df['Adj Close'].values
+    macd, macdsignal, macdhist = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
+
+    # Calculate Fibonacci retracement levels
+    recent_high = df['High'].max()
+    recent_low = df['Low'].min()
+    vertical_distance = recent_high - recent_low
+    fib236 = recent_high - vertical_distance * 0.236
+    fib382 = recent_high - vertical_distance * 0.382
+    fib50 = recent_high - vertical_distance * 0.5
+    fib618 = recent_high - vertical_distance * 0.618
+    fib100 = recent_high - vertical_distance
+
+    # Identify potential support and resistance levels based on MACD and Fibonacci
+    buy_signal = (macd > macdsignal) & (df['Adj Close'] <= fib236)
+    sell_signal = (macd < macdsignal) & (df['Adj Close'] >= fib618)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_srl_strategy(data):
+    # Load data from CSV and calculate MACD and EMA values
+    df = data
+    close = df['Adj Close']
+    ema_10 = close.ewm(span=10, adjust=False).mean()
+    ema_30 = close.ewm(span=30, adjust=False).mean()
+    macd, macd_signal, macd_hist = talib.MACD(close)
+
+    # Calculate support and resistance levels
+    resistance_level = max(ema_10[-1], ema_30[-1])
+    support_level = min(ema_10[-1], ema_30[-1])
+
+    # Apply SRL strategy
+    buy_signal = macd[-1] > macd_signal[-1] and close[-1] > resistance_level
+    sell_signal = macd[-1] < macd_signal[-1] and close[-1] < support_level
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_gann_lines_strategy(data):
+    # Load data from CSV and calculate MACD
+    df = data
+    close = df['Adj Close']
+    macd, macd_signal, macd_hist = talib.MACD(close)
+
+    # Calculate Gann Lines manually
+    high = df['High'].max()
+    low = df['Low'].min()
+    range_ = high - low
+    levels = []
+    for i in range(1, 9):
+        level = high - (range_ * i / 8)
+        levels.append(level)
+
+    # Check if MACD is above or below each Gann Line
+    signals = []
+    for i in range(8):
+        if macd[-1] > levels[i]:
+            signals.append(1)
+        else:
+            signals.append(-1)
+
+    # Determine signal for last row
+    if sum(signals) > 0:
+        return 1
+    elif sum(signals) < 0:
+        return -1
+    else:
+        return 0
+    
+
+def macd_andrews_pitchfork_strategy(data):
+    # Get the MACD indicator
+    macd, _, _ = talib.MACD(data['Close'])
+    
+    # Get the Andrews Pitchfork levels manually
+    high = data['High']
+    low = data['Low']
+    median_price = (high + low) / 2.0
+    x = len(data)
+    af_upper = np.zeros(x)
+    af_lower = np.zeros(x)
+    
+    for i in range(1, x):
+        p1 = [i - 3, low[i - 3]]
+        p2 = [i - 1, high[i - 1]]
+        p3 = [i, high[i]]
+        slope = (p2[1] - p1[1]) / (p2[0] - p1[0])
+        intercept = p2[1] - (slope * p2[0])
+        af_upper[i] = (slope * p3[0]) + intercept
+        
+        p1 = [i - 3, high[i - 3]]
+        p2 = [i - 1, low[i - 1]]
+        p3 = [i, low[i]]
+        slope = (p2[1] - p1[1]) / (p2[0] - p1[0])
+        intercept = p2[1] - (slope * p2[0])
+        af_lower[i] = (slope * p3[0]) + intercept
+    
+    # Determine buy/sell signals
+    buy_signal = False
+    sell_signal = False
+    
+    for i in range(2, x):
+        if macd[i-2] < macd[i-1] and macd[i-1] > macd[i]:
+            if af_lower[i-1] < median_price[i] and af_lower[i] >= median_price[i]:
+                buy_signal = True
+        elif macd[i-2] > macd[i-1] and macd[i-1] < macd[i]:
+            if af_upper[i-1] > median_price[i] and af_upper[i] <= median_price[i]:
+                sell_signal = True
+    
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def macd_ma_sr_strategy(data):
+    # Extract required columns from data
+    close = data['Close']
+    
+    # Calculate MACD
+    macd, macd_signal, _ = talib.MACD(close)
+    
+    # Calculate moving averages
+    sma_10 = talib.SMA(close, timeperiod=10)
+    sma_50 = talib.SMA(close, timeperiod=50)
+    
+    # Calculate support and resistance levels
+    resistance = pd.concat([sma_10, sma_50]).groupby(level=0).max()
+    support = pd.concat([sma_10, sma_50]).groupby(level=0).min()
+    
+    # Determine buy/sell signals
+    buy_signal = (macd > macd_signal) & (close > resistance)
+    sell_signal = (macd < macd_signal) & (close < support)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def macd_awesome_oscillator_strategy(data):
+    # Define inputs
+    close = data['Close']
+    
+    # Calculate MACD
+    macd, macdsignal, macdhist = talib.MACD(close)
+    
+    # Calculate Awesome Oscillator
+    median_price = (data['High'] + data['Low']) / 2
+    ao_short = talib.SMA(median_price, timeperiod=5)
+    ao_long = talib.SMA(median_price, timeperiod=34)
+    awesome_oscillator = ao_short - ao_long
+    
+    # Determine signal for last row
+    if macdhist.iloc[-1] > 0 and awesome_oscillator.iloc[-1] > 0:
+        return 1
+    elif macdhist.iloc[-1] < 0 and awesome_oscillator.iloc[-1] < 0:
+        return -1
+    else:
+        return 0
+
 # Define the labels for the heatmap
 trend_indicators = ['SMA', 'EMA', 'MACD', 'PSAR', 'ICHIMOKU', 'SUPERTREND']
 momentum_indicators = ['RSI', 'Stochastic', 'CCI', 'ROC', 'WPR', 'MACD_Hist']
@@ -824,15 +2164,25 @@ oscillator_indicators = ['RSI', 'MACD', 'Stochastic', 'Awesome_Oscillator', 'WPR
 # Define the labels for the indicators
 indicators = trend_indicators + momentum_indicators + volatility_indicators + volume_indicators + support_resistance_indicators + oscillator_indicators
 # data = pd.read_csv("EURUSD=X.csv", index_col=0)
-
+# Define the indicator groups
+indicators_groups = {
+    'Trend': trend_indicators,
+    'Momentum': momentum_indicators,
+    'Volatility': volatility_indicators,
+    'Volume': volume_indicators,
+    'S & R': support_resistance_indicators,
+    'Oscillator': oscillator_indicators
+}
 # Define the stock symbol and time period to download
-# symbol = "EURGBP=X"
+
 symbol = "EURUSD=X"
 end_date = datetime.datetime.now().strftime('%Y-%m-%d')
 start_date = (datetime.datetime.now() - datetime.timedelta(days=1440)).strftime('%Y-%m-%d')
 
 # Download the historical data from Yahoo Finance
 data = yf.download(symbol, start=start_date, end=end_date)
+
+# data.to_csv(f"{symbol}.csv") 
 
 
 # Define a dictionary of strategies for each indicator combination
@@ -873,67 +2223,67 @@ strategies = {
 	('EMA', 'SMA'): sma_ema_strategy(data),
 	('EMA', 'MACD'): ema_macd_strategy(data),
 	('EMA', 'PSAR'): ema_psar_strategy(data),
-	('EMA', 'ICHIMOKU'): perceptron_strategy(data),
-	('EMA', 'SUPERTREND'): perceptron_strategy(data),
-	('EMA', 'RSI'): perceptron_strategy(data),
-	('EMA', 'Stochastic'): perceptron_strategy(data),
-	('EMA', 'CCI'): perceptron_strategy(data),
-	('EMA', 'ROC'): perceptron_strategy(data),
-	('EMA', 'WPR'): perceptron_strategy(data),
-	('EMA', 'MACD_Hist'): perceptron_strategy(data),
-	('EMA', 'BBANDS'): perceptron_strategy(data),
-	('EMA', 'ATR'): perceptron_strategy(data),
-	('EMA', 'STDEV'): perceptron_strategy(data),
-	('EMA', 'KC'): perceptron_strategy(data),
-	('EMA', 'Donchian'): perceptron_strategy(data),
-	('EMA', 'Chandelier_Exit'): perceptron_strategy(data),
-	('EMA', 'OBV'): perceptron_strategy(data),
-	('EMA', 'CMF'): perceptron_strategy(data),
-	('EMA', 'VROC'): perceptron_strategy(data),
-	('EMA', 'MFI'): perceptron_strategy(data),
-	('EMA', 'ADL'): perceptron_strategy(data),
-	('EMA', 'EOM'): perceptron_strategy(data),
-	('EMA', 'Pivot_Points'): perceptron_strategy(data),
-	('EMA', 'Fibonacci_Retracement'): perceptron_strategy(data),
-	('EMA', 'SRL'): perceptron_strategy(data),
-	('EMA', 'Gann_Lines'): perceptron_strategy(data),
-	('EMA', 'Andrews_Pitchfork'): perceptron_strategy(data),
-	('EMA', 'MA_Support_Resistance'): perceptron_strategy(data),
-	('EMA', 'Awesome_Oscillator'): perceptron_strategy(data),
+	('EMA', 'ICHIMOKU'): ema_ichimoku_strategy(data),
+	('EMA', 'SUPERTREND'): ema_supertrend_strategy(data),
+	('EMA', 'RSI'): ema_rsi_strategy(data),
+	('EMA', 'Stochastic'): ema_stochastic_strategy(data),
+	('EMA', 'CCI'): ema_cci_strategy(data),
+	('EMA', 'ROC'): ema_roc_strategy(data),
+	('EMA', 'WPR'): ema_wpr_strategy(data),
+	('EMA', 'MACD_Hist'): ema_macd_hist_strategy(data),
+	('EMA', 'BBANDS'): ema_bbands_strategy(data),
+	('EMA', 'ATR'): ema_atr_strategy(data),
+	('EMA', 'STDEV'): ema_stdev_strategy(data),
+	('EMA', 'KC'): ema_kc_strategy(data),
+	('EMA', 'Donchian'): ema_donchian_strategy(data),
+	('EMA', 'Chandelier_Exit'): ema_chandelier_exit_strategy(data),
+	('EMA', 'OBV'): ema_obv_strategy(data),
+	('EMA', 'CMF'): ema_cmf_strategy(data),
+	('EMA', 'VROC'): ema_vroc_strategy(data),
+	('EMA', 'MFI'): ema_mfi_strategy(data),
+	('EMA', 'ADL'): ema_adl_strategy(data),
+	('EMA', 'EOM'): ema_eom_strategy(data),
+	('EMA', 'Pivot_Points'): ema_pivot_points_strategy(data),
+	('EMA', 'Fibonacci_Retracement'): ema_fibonacci_strategy(data),
+	('EMA', 'SRL'): ema_srl_strategy(data),
+	('EMA', 'Gann_Lines'): ema_gann_lines_strategy(data),
+	('EMA', 'Andrews_Pitchfork'): ema_andrews_pitchfork_strategy(data),
+	('EMA', 'MA_Support_Resistance'): ema_sr_strategy(data),
+	('EMA', 'Awesome_Oscillator'): ema_awesome_oscillator_strategy(data),
 	('MACD', 'SMA'): sma_macd_strategy(data),
 	('MACD', 'EMA'): ema_macd_strategy(data),
-	('MACD', 'MACD'): perceptron_strategy(data),
-	('MACD', 'PSAR'): perceptron_strategy(data),
-	('MACD', 'ICHIMOKU'): perceptron_strategy(data),
-	('MACD', 'SUPERTREND'): perceptron_strategy(data),
-	('MACD', 'RSI'): perceptron_strategy(data),
-	('MACD', 'Stochastic'): perceptron_strategy(data),
-	('MACD', 'CCI'): perceptron_strategy(data),
-	('MACD', 'ROC'): perceptron_strategy(data),
-	('MACD', 'WPR'): perceptron_strategy(data),
-	('MACD', 'MACD_Hist'): perceptron_strategy(data),
-	('MACD', 'BBANDS'): perceptron_strategy(data),
-	('MACD', 'ATR'): perceptron_strategy(data),
-	('MACD', 'STDEV'): perceptron_strategy(data),
-	('MACD', 'KC'): perceptron_strategy(data),
-	('MACD', 'Donchian'): perceptron_strategy(data),
-	('MACD', 'Chandelier_Exit'): perceptron_strategy(data),
-	('MACD', 'OBV'): perceptron_strategy(data),
-	('MACD', 'CMF'): perceptron_strategy(data),
-	('MACD', 'VROC'): perceptron_strategy(data),
-	('MACD', 'MFI'): perceptron_strategy(data),
-	('MACD', 'ADL'): perceptron_strategy(data),
-	('MACD', 'EOM'): perceptron_strategy(data),
-	('MACD', 'Pivot_Points'): perceptron_strategy(data),
-	('MACD', 'Fibonacci_Retracement'): perceptron_strategy(data),
-	('MACD', 'SRL'): perceptron_strategy(data),
-	('MACD', 'Gann_Lines'): perceptron_strategy(data),
-	('MACD', 'Andrews_Pitchfork'): perceptron_strategy(data),
-	('MACD', 'MA_Support_Resistance'): perceptron_strategy(data),
-	('MACD', 'Awesome_Oscillator'): perceptron_strategy(data),
+	('MACD', 'MACD'): macd_strategy(data),
+	('MACD', 'PSAR'): macd_psar_strategy(data),
+	('MACD', 'ICHIMOKU'): macd_ichimoku_strategy(data),
+	('MACD', 'SUPERTREND'): macd_supertrend_atr_strategy(data),
+	('MACD', 'RSI'): macd_rsi_strategy(data),
+	('MACD', 'Stochastic'): macd_stochastic_strategy(data),
+	('MACD', 'CCI'): macd_cci_strategy(data),
+	('MACD', 'ROC'): macd_roc_strategy(data),
+	('MACD', 'WPR'): macd_wpr_strategy(data),
+	('MACD', 'MACD_Hist'): macd_hist_strategy(data),
+	('MACD', 'BBANDS'): macd_bbands_strategy(data),
+	('MACD', 'ATR'): macd_atr_strategy(data),
+	('MACD', 'STDEV'): macd_stdev_strategy(data),
+	('MACD', 'KC'): macd_kc_strategy(data),
+	('MACD', 'Donchian'): macd_donchian_strategy(data),
+	('MACD', 'Chandelier_Exit'): macd_chandelier_exit_strategy(data),
+	('MACD', 'OBV'): macd_obv_strategy(data),
+	('MACD', 'CMF'): macd_cmf_strategy(data),
+	('MACD', 'VROC'): macd_vroc_strategy(data),
+	('MACD', 'MFI'): macd_mfi_strategy(data),
+	('MACD', 'ADL'): macd_adl_strategy(data),
+	('MACD', 'EOM'): macd_eom_strategy(data),
+	('MACD', 'Pivot_Points'): macd_pivot_points_strategy(data),
+	('MACD', 'Fibonacci_Retracement'): macd_fibonacci_strategy(data),
+	('MACD', 'SRL'): macd_srl_strategy(data),
+	('MACD', 'Gann_Lines'): macd_gann_lines_strategy(data),
+	('MACD', 'Andrews_Pitchfork'): macd_andrews_pitchfork_strategy(data),
+	('MACD', 'MA_Support_Resistance'): macd_ma_sr_strategy(data),
+	('MACD', 'Awesome_Oscillator'): macd_awesome_oscillator_strategy(data),
 	('PSAR', 'SMA'): sma_psar_strategy(data),
 	('PSAR', 'EMA'): ema_psar_strategy(data),
-	('PSAR', 'MACD'): perceptron_strategy(data),
+	('PSAR', 'MACD'): macd_psar_strategy(data),
 	('PSAR', 'PSAR'): perceptron_strategy(data),
 	('PSAR', 'ICHIMOKU'): perceptron_strategy(data),
 	('PSAR', 'SUPERTREND'): perceptron_strategy(data),
@@ -963,8 +2313,8 @@ strategies = {
 	('PSAR', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('PSAR', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('ICHIMOKU', 'SMA'): sma_ichimoku_strategy(data),
-	('ICHIMOKU', 'EMA'): perceptron_strategy(data),
-	('ICHIMOKU', 'MACD'): perceptron_strategy(data),
+	('ICHIMOKU', 'EMA'): ema_ichimoku_strategy(data),
+	('ICHIMOKU', 'MACD'): macd_ichimoku_strategy(data),
 	('ICHIMOKU', 'PSAR'): perceptron_strategy(data),
 	('ICHIMOKU', 'ICHIMOKU'): perceptron_strategy(data),
 	('ICHIMOKU', 'SUPERTREND'): perceptron_strategy(data),
@@ -994,8 +2344,8 @@ strategies = {
 	('ICHIMOKU', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('ICHIMOKU', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('SUPERTREND', 'SMA'): sma_supertrend_strategy(data),
-	('SUPERTREND', 'EMA'): perceptron_strategy(data),
-	('SUPERTREND', 'MACD'): perceptron_strategy(data),
+	('SUPERTREND', 'EMA'): ema_supertrend_strategy(data),
+	('SUPERTREND', 'MACD'): macd_supertrend_atr_strategy(data),
 	('SUPERTREND', 'PSAR'): perceptron_strategy(data),
 	('SUPERTREND', 'ICHIMOKU'): perceptron_strategy(data),
 	('SUPERTREND', 'SUPERTREND'): perceptron_strategy(data),
@@ -1025,8 +2375,8 @@ strategies = {
 	('SUPERTREND', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('SUPERTREND', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('RSI', 'SMA'): sma_rsi_strategy(data),
-	('RSI', 'EMA'): perceptron_strategy(data),
-	('RSI', 'MACD'): perceptron_strategy(data),
+	('RSI', 'EMA'): ema_rsi_strategy(data),
+	('RSI', 'MACD'): macd_rsi_strategy(data),
 	('RSI', 'PSAR'): perceptron_strategy(data),
 	('RSI', 'ICHIMOKU'): perceptron_strategy(data),
 	('RSI', 'SUPERTREND'): perceptron_strategy(data),
@@ -1056,8 +2406,8 @@ strategies = {
 	('RSI', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('RSI', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Stochastic', 'SMA'): sma_stochastic_strategy(data),
-	('Stochastic', 'EMA'): perceptron_strategy(data),
-	('Stochastic', 'MACD'): perceptron_strategy(data),
+	('Stochastic', 'EMA'): ema_stochastic_strategy(data),
+	('Stochastic', 'MACD'): macd_stochastic_strategy(data),
 	('Stochastic', 'PSAR'): perceptron_strategy(data),
 	('Stochastic', 'ICHIMOKU'): perceptron_strategy(data),
 	('Stochastic', 'SUPERTREND'): perceptron_strategy(data),
@@ -1087,8 +2437,8 @@ strategies = {
 	('Stochastic', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Stochastic', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('CCI', 'SMA'): sma_cci_strategy(data),
-	('CCI', 'EMA'): perceptron_strategy(data),
-	('CCI', 'MACD'): perceptron_strategy(data),
+	('CCI', 'EMA'): ema_cci_strategy(data),
+	('CCI', 'MACD'): macd_cci_strategy(data),
 	('CCI', 'PSAR'): perceptron_strategy(data),
 	('CCI', 'ICHIMOKU'): perceptron_strategy(data),
 	('CCI', 'SUPERTREND'): perceptron_strategy(data),
@@ -1118,8 +2468,8 @@ strategies = {
 	('CCI', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('CCI', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('ROC', 'SMA'): sma_roc_strategy(data),
-	('ROC', 'EMA'): perceptron_strategy(data),
-	('ROC', 'MACD'): perceptron_strategy(data),
+	('ROC', 'EMA'): ema_roc_strategy(data),
+	('ROC', 'MACD'): macd_roc_strategy(data),
 	('ROC', 'PSAR'): perceptron_strategy(data),
 	('ROC', 'ICHIMOKU'): perceptron_strategy(data),
 	('ROC', 'SUPERTREND'): perceptron_strategy(data),
@@ -1149,8 +2499,8 @@ strategies = {
 	('ROC', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('ROC', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('WPR', 'SMA'): sma_wpr_strategy(data),
-	('WPR', 'EMA'): perceptron_strategy(data),
-	('WPR', 'MACD'): perceptron_strategy(data),
+	('WPR', 'EMA'): ema_wpr_strategy(data),
+	('WPR', 'MACD'): macd_wpr_strategy(data),
 	('WPR', 'PSAR'): perceptron_strategy(data),
 	('WPR', 'ICHIMOKU'): perceptron_strategy(data),
 	('WPR', 'SUPERTREND'): perceptron_strategy(data),
@@ -1180,8 +2530,8 @@ strategies = {
 	('WPR', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('WPR', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('MACD_Hist', 'SMA'): sma_macd_hist_strategy(data),
-	('MACD_Hist', 'EMA'): perceptron_strategy(data),
-	('MACD_Hist', 'MACD'): perceptron_strategy(data),
+	('MACD_Hist', 'EMA'): ema_macd_hist_strategy(data),
+	('MACD_Hist', 'MACD'): macd_hist_strategy(data),
 	('MACD_Hist', 'PSAR'): perceptron_strategy(data),
 	('MACD_Hist', 'ICHIMOKU'): perceptron_strategy(data),
 	('MACD_Hist', 'SUPERTREND'): perceptron_strategy(data),
@@ -1211,8 +2561,8 @@ strategies = {
 	('MACD_Hist', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('MACD_Hist', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('BBANDS', 'SMA'): sma_bbands_strategy(data),
-	('BBANDS', 'EMA'): perceptron_strategy(data),
-	('BBANDS', 'MACD'): perceptron_strategy(data),
+	('BBANDS', 'EMA'): ema_bbands_strategy(data),
+	('BBANDS', 'MACD'): macd_bbands_strategy(data),
 	('BBANDS', 'PSAR'): perceptron_strategy(data),
 	('BBANDS', 'ICHIMOKU'): perceptron_strategy(data),
 	('BBANDS', 'SUPERTREND'): perceptron_strategy(data),
@@ -1242,8 +2592,8 @@ strategies = {
 	('BBANDS', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('BBANDS', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('ATR', 'SMA'): sma_atr_strategy(data),
-	('ATR', 'EMA'): perceptron_strategy(data),
-	('ATR', 'MACD'): perceptron_strategy(data),
+	('ATR', 'EMA'): ema_atr_strategy(data),
+	('ATR', 'MACD'): macd_atr_strategy(data),
 	('ATR', 'PSAR'): perceptron_strategy(data),
 	('ATR', 'ICHIMOKU'): perceptron_strategy(data),
 	('ATR', 'SUPERTREND'): perceptron_strategy(data),
@@ -1273,8 +2623,8 @@ strategies = {
 	('ATR', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('ATR', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('STDEV', 'SMA'): sma_stdev_strategy(data),
-	('STDEV', 'EMA'): perceptron_strategy(data),
-	('STDEV', 'MACD'): perceptron_strategy(data),
+	('STDEV', 'EMA'): ema_stdev_strategy(data),
+	('STDEV', 'MACD'): macd_stdev_strategy(data),
 	('STDEV', 'PSAR'): perceptron_strategy(data),
 	('STDEV', 'ICHIMOKU'): perceptron_strategy(data),
 	('STDEV', 'SUPERTREND'): perceptron_strategy(data),
@@ -1304,8 +2654,8 @@ strategies = {
 	('STDEV', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('STDEV', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('KC', 'SMA'): sma_kc_strategy(data),
-	('KC', 'EMA'): perceptron_strategy(data),
-	('KC', 'MACD'): perceptron_strategy(data),
+	('KC', 'EMA'): ema_kc_strategy(data),
+	('KC', 'MACD'): macd_kc_strategy(data),
 	('KC', 'PSAR'): perceptron_strategy(data),
 	('KC', 'ICHIMOKU'): perceptron_strategy(data),
 	('KC', 'SUPERTREND'): perceptron_strategy(data),
@@ -1335,8 +2685,8 @@ strategies = {
 	('KC', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('KC', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Donchian', 'SMA'): sma_donchian_strategy(data),
-	('Donchian', 'EMA'): perceptron_strategy(data),
-	('Donchian', 'MACD'): perceptron_strategy(data),
+	('Donchian', 'EMA'): ema_donchian_strategy(data),
+	('Donchian', 'MACD'): macd_donchian_strategy(data),
 	('Donchian', 'PSAR'): perceptron_strategy(data),
 	('Donchian', 'ICHIMOKU'): perceptron_strategy(data),
 	('Donchian', 'SUPERTREND'): perceptron_strategy(data),
@@ -1366,8 +2716,8 @@ strategies = {
 	('Donchian', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Donchian', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Chandelier_Exit', 'SMA'): sma_chandelier_exit_strategy(data),
-	('Chandelier_Exit', 'EMA'): perceptron_strategy(data),
-	('Chandelier_Exit', 'MACD'): perceptron_strategy(data),
+	('Chandelier_Exit', 'EMA'): ema_chandelier_exit_strategy(data),
+	('Chandelier_Exit', 'MACD'): macd_chandelier_exit_strategy(data),
 	('Chandelier_Exit', 'PSAR'): perceptron_strategy(data),
 	('Chandelier_Exit', 'ICHIMOKU'): perceptron_strategy(data),
 	('Chandelier_Exit', 'SUPERTREND'): perceptron_strategy(data),
@@ -1397,8 +2747,8 @@ strategies = {
 	('Chandelier_Exit', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Chandelier_Exit', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('OBV', 'SMA'): sma_obv_strategy(data),
-	('OBV', 'EMA'): perceptron_strategy(data),
-	('OBV', 'MACD'): perceptron_strategy(data),
+	('OBV', 'EMA'): ema_obv_strategy(data),
+	('OBV', 'MACD'): macd_obv_strategy(data),
 	('OBV', 'PSAR'): perceptron_strategy(data),
 	('OBV', 'ICHIMOKU'): perceptron_strategy(data),
 	('OBV', 'SUPERTREND'): perceptron_strategy(data),
@@ -1428,8 +2778,8 @@ strategies = {
 	('OBV', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('OBV', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('CMF', 'SMA'): sma_cmf_strategy(data),
-	('CMF', 'EMA'): perceptron_strategy(data),
-	('CMF', 'MACD'): perceptron_strategy(data),
+	('CMF', 'EMA'): ema_cmf_strategy(data),
+	('CMF', 'MACD'): macd_cmf_strategy(data),
 	('CMF', 'PSAR'): perceptron_strategy(data),
 	('CMF', 'ICHIMOKU'): perceptron_strategy(data),
 	('CMF', 'SUPERTREND'): perceptron_strategy(data),
@@ -1459,8 +2809,8 @@ strategies = {
 	('CMF', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('CMF', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('VROC', 'SMA'): sma_vroc_strategy(data),
-	('VROC', 'EMA'): perceptron_strategy(data),
-	('VROC', 'MACD'): perceptron_strategy(data),
+	('VROC', 'EMA'): ema_vroc_strategy(data),
+	('VROC', 'MACD'): macd_vroc_strategy(data),
 	('VROC', 'PSAR'): perceptron_strategy(data),
 	('VROC', 'ICHIMOKU'): perceptron_strategy(data),
 	('VROC', 'SUPERTREND'): perceptron_strategy(data),
@@ -1490,8 +2840,8 @@ strategies = {
 	('VROC', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('VROC', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('MFI', 'SMA'): sma_mfi_strategy(data),
-	('MFI', 'EMA'): perceptron_strategy(data),
-	('MFI', 'MACD'): perceptron_strategy(data),
+	('MFI', 'EMA'): ema_mfi_strategy(data),
+	('MFI', 'MACD'): macd_mfi_strategy(data),
 	('MFI', 'PSAR'): perceptron_strategy(data),
 	('MFI', 'ICHIMOKU'): perceptron_strategy(data),
 	('MFI', 'SUPERTREND'): perceptron_strategy(data),
@@ -1521,8 +2871,8 @@ strategies = {
 	('MFI', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('MFI', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('ADL', 'SMA'): sma_adl_strategy(data),
-	('ADL', 'EMA'): perceptron_strategy(data),
-	('ADL', 'MACD'): perceptron_strategy(data),
+	('ADL', 'EMA'): ema_adl_strategy(data),
+	('ADL', 'MACD'): macd_adl_strategy(data),
 	('ADL', 'PSAR'): perceptron_strategy(data),
 	('ADL', 'ICHIMOKU'): perceptron_strategy(data),
 	('ADL', 'SUPERTREND'): perceptron_strategy(data),
@@ -1552,8 +2902,8 @@ strategies = {
 	('ADL', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('ADL', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('EOM', 'SMA'): sma_eom_strategy(data),
-	('EOM', 'EMA'): perceptron_strategy(data),
-	('EOM', 'MACD'): perceptron_strategy(data),
+	('EOM', 'EMA'): ema_eom_strategy(data),
+	('EOM', 'MACD'): macd_eom_strategy(data),
 	('EOM', 'PSAR'): perceptron_strategy(data),
 	('EOM', 'ICHIMOKU'): perceptron_strategy(data),
 	('EOM', 'SUPERTREND'): perceptron_strategy(data),
@@ -1583,8 +2933,8 @@ strategies = {
 	('EOM', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('EOM', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Pivot_Points', 'SMA'): sma_pivot_points_strategy(data),
-	('Pivot_Points', 'EMA'): perceptron_strategy(data),
-	('Pivot_Points', 'MACD'): perceptron_strategy(data),
+	('Pivot_Points', 'EMA'): ema_pivot_points_strategy(data),
+	('Pivot_Points', 'MACD'): macd_pivot_points_strategy(data),
 	('Pivot_Points', 'PSAR'): perceptron_strategy(data),
 	('Pivot_Points', 'ICHIMOKU'): perceptron_strategy(data),
 	('Pivot_Points', 'SUPERTREND'): perceptron_strategy(data),
@@ -1614,8 +2964,8 @@ strategies = {
 	('Pivot_Points', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Pivot_Points', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'SMA'): sma_fibonacci_retracement_strategy(data),
-	('Fibonacci_Retracement', 'EMA'): perceptron_strategy(data),
-	('Fibonacci_Retracement', 'MACD'): perceptron_strategy(data),
+	('Fibonacci_Retracement', 'EMA'): ema_fibonacci_strategy(data),
+	('Fibonacci_Retracement', 'MACD'): macd_fibonacci_strategy(data),
 	('Fibonacci_Retracement', 'PSAR'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'ICHIMOKU'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'SUPERTREND'): perceptron_strategy(data),
@@ -1645,8 +2995,8 @@ strategies = {
 	('Fibonacci_Retracement', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('SRL', 'SMA'): sma_srl_strategy(data),
-	('SRL', 'EMA'): perceptron_strategy(data),
-	('SRL', 'MACD'): perceptron_strategy(data),
+	('SRL', 'EMA'): ema_srl_strategy(data),
+	('SRL', 'MACD'): macd_srl_strategy(data),
 	('SRL', 'PSAR'): perceptron_strategy(data),
 	('SRL', 'ICHIMOKU'): perceptron_strategy(data),
 	('SRL', 'SUPERTREND'): perceptron_strategy(data),
@@ -1676,8 +3026,8 @@ strategies = {
 	('SRL', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('SRL', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Gann_Lines', 'SMA'): sma_gann_lines_strategy(data),
-	('Gann_Lines', 'EMA'): perceptron_strategy(data),
-	('Gann_Lines', 'MACD'): perceptron_strategy(data),
+	('Gann_Lines', 'EMA'): ema_gann_lines_strategy(data),
+	('Gann_Lines', 'MACD'): macd_gann_lines_strategy(data),
 	('Gann_Lines', 'PSAR'): perceptron_strategy(data),
 	('Gann_Lines', 'ICHIMOKU'): perceptron_strategy(data),
 	('Gann_Lines', 'SUPERTREND'): perceptron_strategy(data),
@@ -1707,8 +3057,8 @@ strategies = {
 	('Gann_Lines', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Gann_Lines', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Andrews_Pitchfork', 'SMA'): sma_andrews_pitchfork_strategy(data),
-	('Andrews_Pitchfork', 'EMA'): perceptron_strategy(data),
-	('Andrews_Pitchfork', 'MACD'): perceptron_strategy(data),
+	('Andrews_Pitchfork', 'EMA'): ema_andrews_pitchfork_strategy(data),
+	('Andrews_Pitchfork', 'MACD'): macd_andrews_pitchfork_strategy(data),
 	('Andrews_Pitchfork', 'PSAR'): perceptron_strategy(data),
 	('Andrews_Pitchfork', 'ICHIMOKU'): perceptron_strategy(data),
 	('Andrews_Pitchfork', 'SUPERTREND'): perceptron_strategy(data),
@@ -1738,8 +3088,8 @@ strategies = {
 	('Andrews_Pitchfork', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('Andrews_Pitchfork', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('MA_Support_Resistance', 'SMA'): sma_ma_support_resistance_strategy(data),
-	('MA_Support_Resistance', 'EMA'): perceptron_strategy(data),
-	('MA_Support_Resistance', 'MACD'): perceptron_strategy(data),
+	('MA_Support_Resistance', 'EMA'): ema_sr_strategy(data),
+	('MA_Support_Resistance', 'MACD'): macd_ma_sr_strategy(data),
 	('MA_Support_Resistance', 'PSAR'): perceptron_strategy(data),
 	('MA_Support_Resistance', 'ICHIMOKU'): perceptron_strategy(data),
 	('MA_Support_Resistance', 'SUPERTREND'): perceptron_strategy(data),
@@ -1769,8 +3119,8 @@ strategies = {
 	('MA_Support_Resistance', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('MA_Support_Resistance', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('Awesome_Oscillator', 'SMA'): sma_awesome_oscillator_strategy(data),
-	('Awesome_Oscillator', 'EMA'): perceptron_strategy(data),
-	('Awesome_Oscillator', 'MACD'): perceptron_strategy(data),
+	('Awesome_Oscillator', 'EMA'): ema_awesome_oscillator_strategy(data),
+	('Awesome_Oscillator', 'MACD'): macd_awesome_oscillator_strategy(data),
 	('Awesome_Oscillator', 'PSAR'): perceptron_strategy(data),
 	('Awesome_Oscillator', 'ICHIMOKU'): perceptron_strategy(data),
 	('Awesome_Oscillator', 'SUPERTREND'): perceptron_strategy(data),
@@ -1816,6 +3166,9 @@ for i1 in indicators:
         row.append(calculate_strategy(i1, i2))
     matrix.append(row)
 
+# data.fillna(0,inplace=True)
+# data.to_csv('matrix.csv')
+# print(data)
 data = np.array(matrix)
 
 
@@ -1833,7 +3186,7 @@ cbar.ax.set_yticklabels(['Sell', 'Hold', 'Buy'])
 # Set the tick labels and rotation for the x and y axes
 ax.set_xticks(np.arange(len(indicators)))
 ax.set_yticks(np.arange(len(indicators)))
-ax.set_xticklabels(indicators, rotation=45, ha='right')
+ax.set_xticklabels(indicators, rotation=90, ha='right')
 ax.set_yticklabels(indicators)
 
 # Loop over data dimensions and create text annotations.
@@ -1842,11 +3195,21 @@ for i in range(len(indicators)):
         text = ax.text(j, i, data[i, j],
                        ha="center", va="center", color="black")
 
+# Add lines to separate the indicator groups
+for i, group in enumerate(indicators_groups.keys()):
+    if i >= 0:
+        start = sum([len(x) for x in list(indicators_groups.values())[:i]])
+        plt.axhline(start-0.5, color='black', lw=2)
+        plt.axvline(start-0.5, color='black', lw=2)
+        ax.text(len(indicators), -1+start+len(indicators_groups[group])/2, group, ha='center', va='center', rotation=270, fontsize=10)
+
+        
+
 # Set the title and show the plot
 plt.title("Indicator Heatmap")
 plt.show()
 data = pd.read_csv("EURUSD=X.csv", index_col=0)
-signal = sma_obv_strategy(data)
+signal = macd_donchian_strategy(data)
 
 # Print signal value
 print(signal)
