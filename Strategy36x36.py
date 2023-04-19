@@ -1,5 +1,6 @@
 import yfinance as yf
 import datetime
+from datetime import timedelta
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import numpy as np
@@ -1399,23 +1400,40 @@ def ema_awesome_oscillator_strategy(data):
     else:
         return 0
 
-def macd_strategy(data):
-    # Load data from CSV and calculate MACD values
-    df = data
-    ema_12 = df['Adj Close'].ewm(span=12, adjust=False).mean()
-    ema_26 = df['Adj Close'].ewm(span=26, adjust=False).mean()
-    macd_line = ema_12 - ema_26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    macd_histogram = macd_line - signal_line
+# def macd_strategy(data):
+#     # Load data from CSV and calculate MACD values
+#     df = data
+#     ema_12 = df['Adj Close'].ewm(span=12, adjust=False).mean()
+#     ema_26 = df['Adj Close'].ewm(span=26, adjust=False).mean()
+#     macd_line = ema_12 - ema_26
+#     signal_line = macd_line.ewm(span=9, adjust=False).mean()
+#     macd_histogram = macd_line - signal_line
 
-    # Apply MACD strategy
-    buy_signal = (macd_line.iloc[-1] > signal_line.iloc[-1]) and (macd_line.iloc[-2] <= signal_line.iloc[-2])
-    sell_signal = (macd_line.iloc[-1] < signal_line.iloc[-1]) and (macd_line.iloc[-2] >= signal_line.iloc[-2])
+#     # Apply MACD strategy
+#     buy_signal = (macd_line.iloc[-1] > signal_line.iloc[-1]) and (macd_line.iloc[-2] <= signal_line.iloc[-2])
+#     sell_signal = (macd_line.iloc[-1] < signal_line.iloc[-1]) and (macd_line.iloc[-2] >= signal_line.iloc[-2])
+
+#     # Determine signal for last OHLCV row
+#     if buy_signal:
+#         return 1
+#     elif sell_signal:
+#         return -1
+#     else:
+#         return 0
+def macd_strategy(data):
+    # Extract the close price from the data
+    close = data['Close']
+
+    # Calculate MACD with period (12, 26, 9)
+    macd, macd_signal, macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+
+    # Calculate MACD with period (5, 10, 3)
+    macd2, macd_signal2, macd_hist2 = talib.MACD(close, fastperiod=5, slowperiod=10, signalperiod=3)
 
     # Determine signal for last OHLCV row
-    if buy_signal:
+    if macd[-1] > macd_signal[-1] and macd2[-1] > macd_signal2[-1]:
         return 1
-    elif sell_signal:
+    elif macd[-1] < macd_signal[-1] and macd2[-1] < macd_signal2[-1]:
         return -1
     else:
         return 0
@@ -2153,6 +2171,561 @@ def macd_awesome_oscillator_strategy(data):
     else:
         return 0
 
+def psar_strategy(data):
+    psar1 = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    psar2 = talib.SAR(data['High'], data['Low'], acceleration=0.01, maximum=0.1)
+    
+    buy_signal = (data['Close'] > psar1) & (data['Close'] > psar2)
+    sell_signal = (data['Close'] < psar1) | (data['Close'] < psar2)
+    
+    if buy_signal.any():
+        return 1
+    elif sell_signal.any():
+        return -1
+    else:
+        return 0
+
+
+def psar_ichimoku_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate Ichimoku Cloud
+    high = data['High']
+    low = data['Low']
+    conversion_period = 9
+    base_period = 26
+    span_period = 52
+    displacement = 26
+    conversion_line = talib.EMA(high, timeperiod=conversion_period) + talib.EMA(low, timeperiod=conversion_period)
+    base_line = talib.EMA(high, timeperiod=base_period) + talib.EMA(low, timeperiod=base_period)
+    span_a = (conversion_line + base_line) / 2
+    span_b = talib.EMA(high, timeperiod=span_period) + talib.EMA(low, timeperiod=span_period)
+    span_a = span_a.shift(displacement)
+    span_b = span_b.shift(displacement)
+    tenkan_sen = (talib.MAX(high, timeperiod=conversion_period) + talib.MIN(low, timeperiod=conversion_period)) / 2
+    kijun_sen = (talib.MAX(high, timeperiod=base_period) + talib.MIN(low, timeperiod=base_period)) / 2
+    
+    # Determine signals
+    buy_signal = False
+    sell_signal = False
+    
+    if psar.iloc[-1] < data['Close'].iloc[-1]:
+        if data['Close'].iloc[-1] > span_a.iloc[-1] and data['Close'].iloc[-1] > span_b.iloc[-1]:
+            if tenkan_sen.iloc[-1] > kijun_sen.iloc[-1] and tenkan_sen.iloc[-2] <= kijun_sen.iloc[-2]:
+                buy_signal = True
+    elif psar.iloc[-1] > data['Close'].iloc[-1]:
+        if data['Close'].iloc[-1] < span_a.iloc[-1] and data['Close'].iloc[-1] < span_b.iloc[-1]:
+            if tenkan_sen.iloc[-1] < kijun_sen.iloc[-1] and tenkan_sen.iloc[-2] >= kijun_sen.iloc[-2]:
+                sell_signal = True
+                
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+def psar_supertrend_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate SuperTrend
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=10)
+    upper_band = (data['High'] + data['Low']) / 2 + (3 * atr)
+    lower_band = (data['High'] + data['Low']) / 2 - (3 * atr)
+    super_trend = np.where(data['Close'] > lower_band, 1, -1)
+    for i in range(1, len(data)):
+        if super_trend[i-1] == 1 and lower_band[i] > psar[i]:
+            super_trend[i] = 1
+        elif super_trend[i-1] == -1 and upper_band[i] < psar[i]:
+            super_trend[i] = -1
+    
+    # Determine signal for last OHLCV row
+    buy_signal = (super_trend[-1] == 1)
+    sell_signal = (super_trend[-1] == -1)
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_rsi_strategy(data, psar_acceleration=0.02, psar_maximum=0.2, rsi_period=14, rsi_buy_threshold=30, rsi_sell_threshold=70):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=psar_acceleration, maximum=psar_maximum)
+
+    # Calculate RSI
+    rsi = talib.RSI(data['Close'], timeperiod=rsi_period)
+
+    # Determine buy and sell signals
+    buy_signal = (rsi < rsi_buy_threshold) & (data['Close'] > psar)
+    sell_signal = (rsi > rsi_sell_threshold) | (data['Close'] < psar)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_stochastic_strategy(data):
+    high = data['High']
+    low = data['Low']
+    close = data['Close']
+
+    # Calculate PSAR
+    psar = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
+
+    # Calculate Stochastic
+    # stoch = talib.STOCH(high, low, close, fastk_period=14, slowk_period=3, slowd_period=3)
+    stoch = mo.StochasticOscillator(high, low, close, window=14).stoch()
+
+    # Determine buy and sell signals
+    buy_signal = (psar[-1] < close[-1]) and (stoch[-1] < 20)
+    sell_signal = (psar[-1] > close[-1]) and (stoch[-1] > 80)
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_cci_strategy(data):
+    high = data['High'].values
+    low = data['Low'].values
+    close = data['Close'].values
+
+    # Calculate PSAR with default parameters
+    psar = talib.SAR(high, low)
+
+    # Calculate CCI with default parameters
+    cci = talib.CCI(high, low, close)
+
+    # Determine signal for last OHLCV row
+    if psar[-1] < close[-1] and cci[-1] > 100:
+        return 1
+    elif psar[-1] > close[-1] and cci[-1] < -100:
+        return -1
+    else:
+        return 0
+
+def psar_roc_strategy(data):
+    # Define indicator parameters
+    psar_af = 0.02
+    psar_max_af = 0.2
+    roc_period = 14
+    
+    # Calculate PSAR
+    psar = tr.PSARIndicator(high=data['High'], low=data['Low'], close=data['Close'],step=psar_af, max_step=psar_max_af)
+    psar_indicator = psar.psar()
+    
+    # Calculate ROC
+    roc = ROCIndicator(close=data['Close'], window=roc_period)
+    
+    # Determine trading signals
+    signals = []
+    positions = []
+    for i in range(1, len(data)):
+        # Buy signal
+        if data['Close'][i] > psar_indicator[i] and roc.roc()[i] > 0:
+            signals.append(1)
+        # Sell signal
+        elif data['Close'][i] < psar_indicator[i] and roc.roc()[i] < 0:
+            signals.append(-1)
+        # No signal
+        else:
+            signals.append(0)
+            
+        
+    
+    # Determine signal for last OHLCV row
+    buy_signal = data['Close'].iloc[-1] > psar_indicator.iloc[-1] and roc.roc().iloc[-1] > 0
+    sell_signal = data['Close'].iloc[-1] < psar_indicator.iloc[-1] and roc.roc().iloc[-1] < 0
+    
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_wpr_strategy(data):
+    psar = tr.PSARIndicator(high=data['High'], low=data['Low'], close=data['Close'], step=0.02, max_step=0.2)
+    wpr = mo.WilliamsRIndicator(high=data['High'], low=data['Low'], close=data['Close'], lbp=14)
+    
+    buy_signal = psar.psar()[-1] > data['Close'][-1] and wpr.williams_r()[-1] < -80
+    sell_signal = psar.psar()[-1] < data['Close'][-1] and wpr.williams_r()[-1] > -20
+    
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_macd_hist_strategy(data):
+    psar = tr.PSARIndicator(data['High'], data['Low'], data['Close'])
+    macd = tr.MACD(data['Close'], window_fast=12, window_slow=26, window_signal=9)
+    data['psar_up'] = psar.psar_up()
+    data['psar_down'] = psar.psar_down()
+    buy_signal = (data['psar_up'] < data['Close']) & (macd.macd_diff() > 0) & (macd.macd_signal() > 0)
+    sell_signal = (data['psar_down'] > data['Close']) & (macd.macd_diff() < 0) & (macd.macd_signal() < 0)
+    if buy_signal.any():
+        return 1
+    elif sell_signal.any():
+        return -1
+    else:
+        return 0
+
+
+def psar_macd_hist_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+
+    # Calculate MACD
+    macd, signal, hist = talib.MACD(data['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+
+    # Determine buy/sell signals
+    buy_signal = psar[-1] < data['Close'].iloc[-1] and hist[-1] > 0 and macd[-1] > signal[-1]
+    sell_signal = psar[-1] > data['Close'].iloc[-1] and hist[-1] < 0 and macd[-1] < signal[-1]
+
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_bbands_strategy(data):
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    upper, middle, lower = talib.BBANDS(data['Close'], timeperiod=20)
+    buy_signal = psar.iloc[-2] > data['Close'].iloc[-2] and psar.iloc[-1] < data['Close'].iloc[-1] and data['Close'].iloc[-1] > lower.iloc[-1]
+    sell_signal = psar.iloc[-2] < data['Close'].iloc[-2] and psar.iloc[-1] > data['Close'].iloc[-1] and data['Close'].iloc[-1] < upper.iloc[-1]
+    
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_atr_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate ATR
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=14)
+    
+    # Determine long and short positions
+    positions = []
+    for i in range(len(data)):
+        if psar[i] < data['Close'][i] and data['Close'][i] - psar[i] > atr[i]:
+            positions.append(1)
+        elif psar[i] > data['Close'][i] and psar[i] - data['Close'][i] > atr[i]:
+            positions.append(-1)
+        else:
+            positions.append(0)
+    
+    # Determine signal for last OHLCV row
+    last_position = positions[-1]
+    if last_position == 1:
+        return 1
+    elif last_position == -1:
+        return -1
+    else:
+        return 0
+
+
+def psar_stdev_strategy(data):
+    # Calculate PSAR and STDEV
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    stdev = talib.STDDEV(data['Close'], timeperiod=20, nbdev=2)
+
+    # Determine buy and sell signals
+    buy_signal = (data['Close'] > psar) & (data['Close'] < psar + stdev)
+    sell_signal = (data['Close'] < psar) & (data['Close'] > psar - stdev)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_kc_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate Keltner Channels
+    keltner_mid = talib.SMA(data['Close'], timeperiod=20)
+    keltner_upper = keltner_mid + 2*talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=10)
+    keltner_lower = keltner_mid - 2*talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=10)
+
+    # Determine signal for each row in data
+    buy_signal = (psar > data['Close']) & (data['Low'] < keltner_lower)
+    sell_signal = (psar < data['Close']) & (data['High'] > keltner_upper)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def psar_donchian_strategy(data):
+    # Calculate Parabolic SAR indicator
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+
+    # Calculate Donchian Channel indicator
+    upper, middle, lower = talib.BBANDS(data['Close'], timeperiod=20)
+
+    # Determine buy/sell signals
+    buy_signal = (psar > data['Close']) & (data['Close'] > upper)
+    sell_signal = (psar < data['Close']) & (data['Close'] < lower)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_chandelier_exit_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate Chandelier Exit
+    atr = talib.ATR(data['High'], data['Low'], data['Close'], timeperiod=22)
+    long_chandelier_exit = data['High'].rolling(window=22).max() - atr * 3
+    short_chandelier_exit = data['Low'].rolling(window=22).min() + atr * 3
+    
+    # Determine buy and sell signals
+    buy_signal = (data['Close'] > psar) & (data['Low'] > long_chandelier_exit)
+    sell_signal = (data['Close'] < psar) & (data['High'] < short_chandelier_exit)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def psar_obv_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+
+    # Calculate OBV
+    obv = talib.OBV(data['Close'], data['Volume'])
+
+    # Determine buy and sell signals
+    buy_signal = (psar < data['Close']) & (obv > obv.shift(1))
+    sell_signal = (psar > data['Close']) & (obv < obv.shift(1))
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_cmf_strategy(data):
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    cmf = ChaikinMoneyFlowIndicator(high=data['High'], low=data['Low'], close=data['Close'], volume=data['Volume']).chaikin_money_flow()
+    
+    buy_signal = (psar > data['Close']) & (cmf > 0)
+    sell_signal = (psar < data['Close']) & (cmf < 0)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_vroc_strategy(data):
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    vroc = talib.ROC(data['Volume'], timeperiod=14)
+    
+    buy_signal = psar < data['Close'] # PSAR below Close
+    sell_signal = psar > data['Close'] # PSAR above Close
+    
+    if buy_signal.iloc[-1] and vroc.iloc[-1] > 0:
+        return 1 # buy signal
+    elif sell_signal.iloc[-1] and vroc.iloc[-1] < 0:
+        return -1 # sell signal
+    else:
+        return 0 # no signal
+
+def psar_mfi_strategy(data):
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    mfi = talib.MFI(data['High'], data['Low'], data['Close'], data['Volume'], timeperiod=14)
+
+    buy_signal = (psar > data['Close']) & (mfi < 20)
+    sell_signal = (psar < data['Close']) & (mfi > 80)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def psar_adl_strategy(df):
+    psar = tr.PSARIndicator(df['High'], df['Low'], df['Close'])
+    adl = AccDistIndexIndicator(df['High'], df['Low'], df['Close'], df['Volume'])
+    
+    buy_signal = (df['Close'].iloc[-1] > psar.psar().iloc[-1]) & (adl.acc_dist_index().iloc[-1] > adl.acc_dist_index().iloc[-2])
+    sell_signal = (df['Close'].iloc[-1] < psar.psar().iloc[-1]) & (adl.acc_dist_index().iloc[-1] < adl.acc_dist_index().iloc[-2])
+    
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_eom_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate EOM
+    eom = EaseOfMovementIndicator(
+        high=data['High'], low=data['Low'], volume=data['Volume'], window=14, fillna=False
+    ).sma_ease_of_movement()
+    
+    # Generate buy and sell signals
+    buy_signal = (psar.iloc[-1] > data['Close'].iloc[-1]) & (eom.iloc[-1] > 0)
+    sell_signal = (psar.iloc[-1] < data['Close'].iloc[-1]) & (eom.iloc[-1] < 0)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal:
+        return 1
+    elif sell_signal:
+        return -1
+    else:
+        return 0
+
+
+def psar_pivot_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate Pivot Points
+    pp = (data['High'] + data['Low'] + data['Close']) / 3
+    r1 = 2 * pp - data['Low']
+    s1 = 2 * pp - data['High']
+    r2 = pp + (data['High'] - data['Low'])
+    s2 = pp - (data['High'] - data['Low'])
+    r3 = data['High'] + 2 * (pp - data['Low'])
+    s3 = data['Low'] - 2 * (data['High'] - pp)
+    
+    # Determine trading signals
+    buy_signal = (psar > data['Close']) & (data['Close'] > s1)
+    sell_signal = (psar < data['Close']) & (data['Close'] < r1)
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+def psar_fibonacci_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+
+    # Calculate Fibonacci levels
+    high = data['High'].max()
+    low = data['Low'].min()
+    diff = high - low
+    fib_23_6 = low + diff * 0.236
+    fib_38_2 = low + diff * 0.382
+    fib_50_0 = low + diff * 0.5
+    fib_61_8 = low + diff * 0.618
+    fib_76_4 = low + diff * 0.764
+
+    # Determine buy and sell signals
+    buy_signal = (data['Close'] > psar) & (data['Close'] > fib_61_8)
+    sell_signal = (data['Close'] < psar) & (data['Close'] < fib_38_2)
+
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
+
+def psar_srl_strategy(data):
+    # Calculate PSAR
+	high = data['High']
+	low = data['Low']
+	close = data['Close']
+	psar = talib.SAR(high, low, acceleration=0.02, maximum=0.2)
+
+    # Calculate SRL
+	resistance = talib.MAX(high, timeperiod=14)
+	support = talib.MIN(low, timeperiod=14)
+
+	# Determine signal for last OHLCV row
+	if close.iloc[-1] > psar[-1] and close.iloc[-1] > resistance.iloc[-1]:
+		return 1
+	elif close.iloc[-1] < psar[-1] and close.iloc[-1] < support.iloc[-1]:
+		return -1
+	else:
+		return 0
+
+
+def psar_gann_strategy(data):
+    # Calculate PSAR
+    psar = talib.SAR(data['High'], data['Low'], acceleration=0.02, maximum=0.2)
+    
+    # Calculate Gann Lines
+    high_max = data['High'].rolling(window=20).max()
+    low_min = data['Low'].rolling(window=20).min()
+    diff = high_max - low_min
+    levels = [low_min[i] + diff[i] * j / 8 for i in range(20) for j in range(1, 8)]
+    
+    # Determine buy and sell signals
+    buy_signal = (data['Close'] > psar) & (data['Close'] > levels[-1])
+    sell_signal = (data['Close'] < psar) & (data['Close'] < levels[0])
+    
+    # Determine signal for last OHLCV row
+    if buy_signal.iloc[-1]:
+        return 1
+    elif sell_signal.iloc[-1]:
+        return -1
+    else:
+        return 0
+
 # Define the labels for the heatmap
 trend_indicators = ['SMA', 'EMA', 'MACD', 'PSAR', 'ICHIMOKU', 'SUPERTREND']
 momentum_indicators = ['RSI', 'Stochastic', 'CCI', 'ROC', 'WPR', 'MACD_Hist']
@@ -2163,7 +2736,7 @@ oscillator_indicators = ['RSI', 'MACD', 'Stochastic', 'Awesome_Oscillator', 'WPR
 
 # Define the labels for the indicators
 indicators = trend_indicators + momentum_indicators + volatility_indicators + volume_indicators + support_resistance_indicators + oscillator_indicators
-# data = pd.read_csv("EURUSD=X.csv", index_col=0)
+data = pd.read_csv("EURUSD=X.csv", index_col=0)
 # Define the indicator groups
 indicators_groups = {
     'Trend': trend_indicators,
@@ -2175,12 +2748,12 @@ indicators_groups = {
 }
 # Define the stock symbol and time period to download
 
-symbol = "EURUSD=X"
-end_date = datetime.datetime.now().strftime('%Y-%m-%d')
-start_date = (datetime.datetime.now() - datetime.timedelta(days=1440)).strftime('%Y-%m-%d')
+# symbol = "EURUSD=X"
+# end_date = datetime.now().strftime('%Y-%m-%d')
+# start_date = (datetime.now() - timedelta(days=1440)).strftime('%Y-%m-%d')
 
-# Download the historical data from Yahoo Finance
-data = yf.download(symbol, start=start_date, end=end_date)
+# # Download the historical data from Yahoo Finance
+# data = yf.download(symbol, start=start_date, end=end_date)
 
 # data.to_csv(f"{symbol}.csv") 
 
@@ -2284,38 +2857,38 @@ strategies = {
 	('PSAR', 'SMA'): sma_psar_strategy(data),
 	('PSAR', 'EMA'): ema_psar_strategy(data),
 	('PSAR', 'MACD'): macd_psar_strategy(data),
-	('PSAR', 'PSAR'): perceptron_strategy(data),
-	('PSAR', 'ICHIMOKU'): perceptron_strategy(data),
-	('PSAR', 'SUPERTREND'): perceptron_strategy(data),
-	('PSAR', 'RSI'): perceptron_strategy(data),
-	('PSAR', 'Stochastic'): perceptron_strategy(data),
-	('PSAR', 'CCI'): perceptron_strategy(data),
-	('PSAR', 'ROC'): perceptron_strategy(data),
-	('PSAR', 'WPR'): perceptron_strategy(data),
-	('PSAR', 'MACD_Hist'): perceptron_strategy(data),
-	('PSAR', 'BBANDS'): perceptron_strategy(data),
-	('PSAR', 'ATR'): perceptron_strategy(data),
-	('PSAR', 'STDEV'): perceptron_strategy(data),
-	('PSAR', 'KC'): perceptron_strategy(data),
-	('PSAR', 'Donchian'): perceptron_strategy(data),
-	('PSAR', 'Chandelier_Exit'): perceptron_strategy(data),
-	('PSAR', 'OBV'): perceptron_strategy(data),
-	('PSAR', 'CMF'): perceptron_strategy(data),
-	('PSAR', 'VROC'): perceptron_strategy(data),
-	('PSAR', 'MFI'): perceptron_strategy(data),
-	('PSAR', 'ADL'): perceptron_strategy(data),
-	('PSAR', 'EOM'): perceptron_strategy(data),
-	('PSAR', 'Pivot_Points'): perceptron_strategy(data),
-	('PSAR', 'Fibonacci_Retracement'): perceptron_strategy(data),
-	('PSAR', 'SRL'): perceptron_strategy(data),
-	('PSAR', 'Gann_Lines'): perceptron_strategy(data),
+	('PSAR', 'PSAR'): psar_strategy(data),
+	('PSAR', 'ICHIMOKU'): psar_ichimoku_strategy(data),
+	('PSAR', 'SUPERTREND'): psar_supertrend_strategy(data),
+	('PSAR', 'RSI'): psar_rsi_strategy(data),
+	('PSAR', 'Stochastic'): psar_stochastic_strategy(data),
+	('PSAR', 'CCI'): psar_cci_strategy(data),
+	('PSAR', 'ROC'): psar_roc_strategy(data),
+	('PSAR', 'WPR'): psar_wpr_strategy(data),
+	('PSAR', 'MACD_Hist'): psar_macd_hist_strategy(data),
+	('PSAR', 'BBANDS'): psar_bbands_strategy(data),
+	('PSAR', 'ATR'): psar_atr_strategy(data),
+	('PSAR', 'STDEV'): psar_stdev_strategy(data),
+	('PSAR', 'KC'): psar_kc_strategy(data),
+	('PSAR', 'Donchian'): psar_donchian_strategy(data),
+	('PSAR', 'Chandelier_Exit'): psar_chandelier_exit_strategy(data),
+	('PSAR', 'OBV'): psar_obv_strategy(data),
+	('PSAR', 'CMF'): psar_cmf_strategy(data),
+	('PSAR', 'VROC'): psar_vroc_strategy(data),
+	('PSAR', 'MFI'): psar_mfi_strategy(data),
+	('PSAR', 'ADL'): psar_adl_strategy(data),
+	('PSAR', 'EOM'): psar_eom_strategy(data),
+	('PSAR', 'Pivot_Points'): psar_pivot_strategy(data),
+	('PSAR', 'Fibonacci_Retracement'): psar_fibonacci_strategy(data),
+	('PSAR', 'SRL'): psar_srl_strategy(data),
+	('PSAR', 'Gann_Lines'): psar_gann_strategy(data),
 	('PSAR', 'Andrews_Pitchfork'): perceptron_strategy(data),
 	('PSAR', 'MA_Support_Resistance'): perceptron_strategy(data),
 	('PSAR', 'Awesome_Oscillator'): perceptron_strategy(data),
 	('ICHIMOKU', 'SMA'): sma_ichimoku_strategy(data),
 	('ICHIMOKU', 'EMA'): ema_ichimoku_strategy(data),
 	('ICHIMOKU', 'MACD'): macd_ichimoku_strategy(data),
-	('ICHIMOKU', 'PSAR'): perceptron_strategy(data),
+	('ICHIMOKU', 'PSAR'): psar_ichimoku_strategy(data),
 	('ICHIMOKU', 'ICHIMOKU'): perceptron_strategy(data),
 	('ICHIMOKU', 'SUPERTREND'): perceptron_strategy(data),
 	('ICHIMOKU', 'RSI'): perceptron_strategy(data),
@@ -2346,7 +2919,7 @@ strategies = {
 	('SUPERTREND', 'SMA'): sma_supertrend_strategy(data),
 	('SUPERTREND', 'EMA'): ema_supertrend_strategy(data),
 	('SUPERTREND', 'MACD'): macd_supertrend_atr_strategy(data),
-	('SUPERTREND', 'PSAR'): perceptron_strategy(data),
+	('SUPERTREND', 'PSAR'): psar_supertrend_strategy(data),
 	('SUPERTREND', 'ICHIMOKU'): perceptron_strategy(data),
 	('SUPERTREND', 'SUPERTREND'): perceptron_strategy(data),
 	('SUPERTREND', 'RSI'): perceptron_strategy(data),
@@ -2377,7 +2950,7 @@ strategies = {
 	('RSI', 'SMA'): sma_rsi_strategy(data),
 	('RSI', 'EMA'): ema_rsi_strategy(data),
 	('RSI', 'MACD'): macd_rsi_strategy(data),
-	('RSI', 'PSAR'): perceptron_strategy(data),
+	('RSI', 'PSAR'): psar_rsi_strategy(data),
 	('RSI', 'ICHIMOKU'): perceptron_strategy(data),
 	('RSI', 'SUPERTREND'): perceptron_strategy(data),
 	('RSI', 'RSI'): perceptron_strategy(data),
@@ -2408,7 +2981,7 @@ strategies = {
 	('Stochastic', 'SMA'): sma_stochastic_strategy(data),
 	('Stochastic', 'EMA'): ema_stochastic_strategy(data),
 	('Stochastic', 'MACD'): macd_stochastic_strategy(data),
-	('Stochastic', 'PSAR'): perceptron_strategy(data),
+	('Stochastic', 'PSAR'): psar_stochastic_strategy(data),
 	('Stochastic', 'ICHIMOKU'): perceptron_strategy(data),
 	('Stochastic', 'SUPERTREND'): perceptron_strategy(data),
 	('Stochastic', 'RSI'): perceptron_strategy(data),
@@ -2439,7 +3012,7 @@ strategies = {
 	('CCI', 'SMA'): sma_cci_strategy(data),
 	('CCI', 'EMA'): ema_cci_strategy(data),
 	('CCI', 'MACD'): macd_cci_strategy(data),
-	('CCI', 'PSAR'): perceptron_strategy(data),
+	('CCI', 'PSAR'): psar_cci_strategy(data),
 	('CCI', 'ICHIMOKU'): perceptron_strategy(data),
 	('CCI', 'SUPERTREND'): perceptron_strategy(data),
 	('CCI', 'RSI'): perceptron_strategy(data),
@@ -2470,7 +3043,7 @@ strategies = {
 	('ROC', 'SMA'): sma_roc_strategy(data),
 	('ROC', 'EMA'): ema_roc_strategy(data),
 	('ROC', 'MACD'): macd_roc_strategy(data),
-	('ROC', 'PSAR'): perceptron_strategy(data),
+	('ROC', 'PSAR'): psar_roc_strategy(data),
 	('ROC', 'ICHIMOKU'): perceptron_strategy(data),
 	('ROC', 'SUPERTREND'): perceptron_strategy(data),
 	('ROC', 'RSI'): perceptron_strategy(data),
@@ -2501,7 +3074,7 @@ strategies = {
 	('WPR', 'SMA'): sma_wpr_strategy(data),
 	('WPR', 'EMA'): ema_wpr_strategy(data),
 	('WPR', 'MACD'): macd_wpr_strategy(data),
-	('WPR', 'PSAR'): perceptron_strategy(data),
+	('WPR', 'PSAR'): psar_wpr_strategy(data),
 	('WPR', 'ICHIMOKU'): perceptron_strategy(data),
 	('WPR', 'SUPERTREND'): perceptron_strategy(data),
 	('WPR', 'RSI'): perceptron_strategy(data),
@@ -2532,7 +3105,7 @@ strategies = {
 	('MACD_Hist', 'SMA'): sma_macd_hist_strategy(data),
 	('MACD_Hist', 'EMA'): ema_macd_hist_strategy(data),
 	('MACD_Hist', 'MACD'): macd_hist_strategy(data),
-	('MACD_Hist', 'PSAR'): perceptron_strategy(data),
+	('MACD_Hist', 'PSAR'): psar_macd_hist_strategy(data),
 	('MACD_Hist', 'ICHIMOKU'): perceptron_strategy(data),
 	('MACD_Hist', 'SUPERTREND'): perceptron_strategy(data),
 	('MACD_Hist', 'RSI'): perceptron_strategy(data),
@@ -2563,7 +3136,7 @@ strategies = {
 	('BBANDS', 'SMA'): sma_bbands_strategy(data),
 	('BBANDS', 'EMA'): ema_bbands_strategy(data),
 	('BBANDS', 'MACD'): macd_bbands_strategy(data),
-	('BBANDS', 'PSAR'): perceptron_strategy(data),
+	('BBANDS', 'PSAR'): psar_bbands_strategy(data),
 	('BBANDS', 'ICHIMOKU'): perceptron_strategy(data),
 	('BBANDS', 'SUPERTREND'): perceptron_strategy(data),
 	('BBANDS', 'RSI'): perceptron_strategy(data),
@@ -2594,7 +3167,7 @@ strategies = {
 	('ATR', 'SMA'): sma_atr_strategy(data),
 	('ATR', 'EMA'): ema_atr_strategy(data),
 	('ATR', 'MACD'): macd_atr_strategy(data),
-	('ATR', 'PSAR'): perceptron_strategy(data),
+	('ATR', 'PSAR'): psar_atr_strategy(data),
 	('ATR', 'ICHIMOKU'): perceptron_strategy(data),
 	('ATR', 'SUPERTREND'): perceptron_strategy(data),
 	('ATR', 'RSI'): perceptron_strategy(data),
@@ -2625,7 +3198,7 @@ strategies = {
 	('STDEV', 'SMA'): sma_stdev_strategy(data),
 	('STDEV', 'EMA'): ema_stdev_strategy(data),
 	('STDEV', 'MACD'): macd_stdev_strategy(data),
-	('STDEV', 'PSAR'): perceptron_strategy(data),
+	('STDEV', 'PSAR'): psar_stdev_strategy(data),
 	('STDEV', 'ICHIMOKU'): perceptron_strategy(data),
 	('STDEV', 'SUPERTREND'): perceptron_strategy(data),
 	('STDEV', 'RSI'): perceptron_strategy(data),
@@ -2656,7 +3229,7 @@ strategies = {
 	('KC', 'SMA'): sma_kc_strategy(data),
 	('KC', 'EMA'): ema_kc_strategy(data),
 	('KC', 'MACD'): macd_kc_strategy(data),
-	('KC', 'PSAR'): perceptron_strategy(data),
+	('KC', 'PSAR'): psar_kc_strategy(data),
 	('KC', 'ICHIMOKU'): perceptron_strategy(data),
 	('KC', 'SUPERTREND'): perceptron_strategy(data),
 	('KC', 'RSI'): perceptron_strategy(data),
@@ -2687,7 +3260,7 @@ strategies = {
 	('Donchian', 'SMA'): sma_donchian_strategy(data),
 	('Donchian', 'EMA'): ema_donchian_strategy(data),
 	('Donchian', 'MACD'): macd_donchian_strategy(data),
-	('Donchian', 'PSAR'): perceptron_strategy(data),
+	('Donchian', 'PSAR'): psar_donchian_strategy(data),
 	('Donchian', 'ICHIMOKU'): perceptron_strategy(data),
 	('Donchian', 'SUPERTREND'): perceptron_strategy(data),
 	('Donchian', 'RSI'): perceptron_strategy(data),
@@ -2718,7 +3291,7 @@ strategies = {
 	('Chandelier_Exit', 'SMA'): sma_chandelier_exit_strategy(data),
 	('Chandelier_Exit', 'EMA'): ema_chandelier_exit_strategy(data),
 	('Chandelier_Exit', 'MACD'): macd_chandelier_exit_strategy(data),
-	('Chandelier_Exit', 'PSAR'): perceptron_strategy(data),
+	('Chandelier_Exit', 'PSAR'): psar_chandelier_exit_strategy(data),
 	('Chandelier_Exit', 'ICHIMOKU'): perceptron_strategy(data),
 	('Chandelier_Exit', 'SUPERTREND'): perceptron_strategy(data),
 	('Chandelier_Exit', 'RSI'): perceptron_strategy(data),
@@ -2749,7 +3322,7 @@ strategies = {
 	('OBV', 'SMA'): sma_obv_strategy(data),
 	('OBV', 'EMA'): ema_obv_strategy(data),
 	('OBV', 'MACD'): macd_obv_strategy(data),
-	('OBV', 'PSAR'): perceptron_strategy(data),
+	('OBV', 'PSAR'): psar_obv_strategy(data),
 	('OBV', 'ICHIMOKU'): perceptron_strategy(data),
 	('OBV', 'SUPERTREND'): perceptron_strategy(data),
 	('OBV', 'RSI'): perceptron_strategy(data),
@@ -2780,7 +3353,7 @@ strategies = {
 	('CMF', 'SMA'): sma_cmf_strategy(data),
 	('CMF', 'EMA'): ema_cmf_strategy(data),
 	('CMF', 'MACD'): macd_cmf_strategy(data),
-	('CMF', 'PSAR'): perceptron_strategy(data),
+	('CMF', 'PSAR'): psar_cmf_strategy(data),
 	('CMF', 'ICHIMOKU'): perceptron_strategy(data),
 	('CMF', 'SUPERTREND'): perceptron_strategy(data),
 	('CMF', 'RSI'): perceptron_strategy(data),
@@ -2811,7 +3384,7 @@ strategies = {
 	('VROC', 'SMA'): sma_vroc_strategy(data),
 	('VROC', 'EMA'): ema_vroc_strategy(data),
 	('VROC', 'MACD'): macd_vroc_strategy(data),
-	('VROC', 'PSAR'): perceptron_strategy(data),
+	('VROC', 'PSAR'): psar_vroc_strategy(data),
 	('VROC', 'ICHIMOKU'): perceptron_strategy(data),
 	('VROC', 'SUPERTREND'): perceptron_strategy(data),
 	('VROC', 'RSI'): perceptron_strategy(data),
@@ -2842,7 +3415,7 @@ strategies = {
 	('MFI', 'SMA'): sma_mfi_strategy(data),
 	('MFI', 'EMA'): ema_mfi_strategy(data),
 	('MFI', 'MACD'): macd_mfi_strategy(data),
-	('MFI', 'PSAR'): perceptron_strategy(data),
+	('MFI', 'PSAR'): psar_mfi_strategy(data),
 	('MFI', 'ICHIMOKU'): perceptron_strategy(data),
 	('MFI', 'SUPERTREND'): perceptron_strategy(data),
 	('MFI', 'RSI'): perceptron_strategy(data),
@@ -2873,7 +3446,7 @@ strategies = {
 	('ADL', 'SMA'): sma_adl_strategy(data),
 	('ADL', 'EMA'): ema_adl_strategy(data),
 	('ADL', 'MACD'): macd_adl_strategy(data),
-	('ADL', 'PSAR'): perceptron_strategy(data),
+	('ADL', 'PSAR'): psar_adl_strategy(data),
 	('ADL', 'ICHIMOKU'): perceptron_strategy(data),
 	('ADL', 'SUPERTREND'): perceptron_strategy(data),
 	('ADL', 'RSI'): perceptron_strategy(data),
@@ -2904,7 +3477,7 @@ strategies = {
 	('EOM', 'SMA'): sma_eom_strategy(data),
 	('EOM', 'EMA'): ema_eom_strategy(data),
 	('EOM', 'MACD'): macd_eom_strategy(data),
-	('EOM', 'PSAR'): perceptron_strategy(data),
+	('EOM', 'PSAR'): psar_eom_strategy(data),
 	('EOM', 'ICHIMOKU'): perceptron_strategy(data),
 	('EOM', 'SUPERTREND'): perceptron_strategy(data),
 	('EOM', 'RSI'): perceptron_strategy(data),
@@ -2935,7 +3508,7 @@ strategies = {
 	('Pivot_Points', 'SMA'): sma_pivot_points_strategy(data),
 	('Pivot_Points', 'EMA'): ema_pivot_points_strategy(data),
 	('Pivot_Points', 'MACD'): macd_pivot_points_strategy(data),
-	('Pivot_Points', 'PSAR'): perceptron_strategy(data),
+	('Pivot_Points', 'PSAR'): psar_pivot_strategy(data),
 	('Pivot_Points', 'ICHIMOKU'): perceptron_strategy(data),
 	('Pivot_Points', 'SUPERTREND'): perceptron_strategy(data),
 	('Pivot_Points', 'RSI'): perceptron_strategy(data),
@@ -2966,7 +3539,7 @@ strategies = {
 	('Fibonacci_Retracement', 'SMA'): sma_fibonacci_retracement_strategy(data),
 	('Fibonacci_Retracement', 'EMA'): ema_fibonacci_strategy(data),
 	('Fibonacci_Retracement', 'MACD'): macd_fibonacci_strategy(data),
-	('Fibonacci_Retracement', 'PSAR'): perceptron_strategy(data),
+	('Fibonacci_Retracement', 'PSAR'): psar_fibonacci_strategy(data),
 	('Fibonacci_Retracement', 'ICHIMOKU'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'SUPERTREND'): perceptron_strategy(data),
 	('Fibonacci_Retracement', 'RSI'): perceptron_strategy(data),
@@ -2997,7 +3570,7 @@ strategies = {
 	('SRL', 'SMA'): sma_srl_strategy(data),
 	('SRL', 'EMA'): ema_srl_strategy(data),
 	('SRL', 'MACD'): macd_srl_strategy(data),
-	('SRL', 'PSAR'): perceptron_strategy(data),
+	('SRL', 'PSAR'): psar_srl_strategy(data),
 	('SRL', 'ICHIMOKU'): perceptron_strategy(data),
 	('SRL', 'SUPERTREND'): perceptron_strategy(data),
 	('SRL', 'RSI'): perceptron_strategy(data),
@@ -3028,7 +3601,7 @@ strategies = {
 	('Gann_Lines', 'SMA'): sma_gann_lines_strategy(data),
 	('Gann_Lines', 'EMA'): ema_gann_lines_strategy(data),
 	('Gann_Lines', 'MACD'): macd_gann_lines_strategy(data),
-	('Gann_Lines', 'PSAR'): perceptron_strategy(data),
+	('Gann_Lines', 'PSAR'): psar_gann_strategy(data),
 	('Gann_Lines', 'ICHIMOKU'): perceptron_strategy(data),
 	('Gann_Lines', 'SUPERTREND'): perceptron_strategy(data),
 	('Gann_Lines', 'RSI'): perceptron_strategy(data),
@@ -3209,7 +3782,7 @@ for i, group in enumerate(indicators_groups.keys()):
 plt.title("Indicator Heatmap")
 plt.show()
 data = pd.read_csv("EURUSD=X.csv", index_col=0)
-signal = macd_donchian_strategy(data)
+signal = psar_gann_strategy(data)
 
 # Print signal value
 print(signal)
