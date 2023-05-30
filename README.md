@@ -1,5 +1,5 @@
 # Strategy 36 x 36 (indicators selected by openai)
-_this is still work in progress... too many function to create_
+_this plot is incomplete ... too many function to create_
 ![alt text](https://github.com/kmafutah/heatmap/blob/main/Figure_36x36.png?raw=true)
 
 
