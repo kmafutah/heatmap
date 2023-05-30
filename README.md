@@ -7,5 +7,7 @@
 ![alt text](https://github.com/kmafutah/heatmap/blob/main/Figure_4x4.png?raw=true)
 
 Data collection
+![alt text](https://github.com/kmafutah/heatmap/blob/main/Figure_candle_pnf.png?raw=true)
+
 
 # WIP
