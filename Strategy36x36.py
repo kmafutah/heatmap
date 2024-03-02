@@ -2726,6 +2726,15 @@ def psar_gann_strategy(data):
     else:
         return 0
 
+
+# TODO UPDATE TO THESE - old list has duplicates
+# trend_indicators = ['SMA', 'EMA', 'MACD', 'PSAR', 'ICHIMOKU', 'SUPERTREND']
+# momentum_indicators = ['RSI', 'ROC', 'CMO', 'PPO', 'WPR', 'RVI']
+# volatility_indicators = ['BBANDS', 'ATR', 'STDEV', 'KC', 'Donchian', 'Chandelier_Exit']
+# volume_indicators = ['OBV', 'CMF', 'VROC', 'MFI', 'ADL', 'EOM']
+# support_resistance_indicators = ['Pivot_Points', 'Fibonacci_Retracement', 'SRL', 'Gann_Lines', 'Andrews_Pitchfork', 'MA_Support_Resistance']
+# oscillator_indicators = ['VWAP', 'TSI', 'Stochastic', 'Awesome_Oscillator', 'DPO', 'CCI']
+
 # Define the labels for the heatmap
 trend_indicators = ['SMA', 'EMA', 'MACD', 'PSAR', 'ICHIMOKU', 'SUPERTREND']
 momentum_indicators = ['RSI', 'Stochastic', 'CCI', 'ROC', 'WPR', 'MACD_Hist']
